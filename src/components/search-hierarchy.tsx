@@ -27,6 +27,34 @@ export default function SearchHierarchy() {
     new Set()
   );
 
+  const groupReportsIntoRules = (data: EmisXmlDocument) => {
+    // Group reports by rule
+    const groups = new Map<string, Feature[]>();
+
+    data.reports.forEach((report) => {
+        const feature: Feature = {
+          id: report.id,
+          name: report.searchName,
+          displayName: report.name,
+          rule: report.rule,
+          valueSets: report.valueSets,
+          isSelected: false,
+          isExpanding: false,
+        };
+
+        if (!groups.has(report.rule)) {
+          groups.set(report.rule, []);
+        }
+        groups.get(report.rule)!.push(feature);
+      });
+
+      const ruleGroupsArray: RuleGroup[] = Array.from(groups.entries()).map(
+        ([ruleName, features]) => ({ ruleName, features })
+      );
+
+      setRuleGroups(ruleGroupsArray);
+  };
+
   // Load from IndexedDB on mount
   useEffect(() => {
     loadParsedXmlData()
@@ -55,34 +83,6 @@ export default function SearchHierarchy() {
         console.error('Failed to load stored data:', error);
       });
   }, []);
-
-  const groupReportsIntoRules = (data: EmisXmlDocument) => {
-    // Group reports by rule
-    const groups = new Map<string, Feature[]>();
-
-    data.reports.forEach((report) => {
-        const feature: Feature = {
-          id: report.id,
-          name: report.searchName,
-          displayName: report.name,
-          rule: report.rule,
-          valueSets: report.valueSets,
-          isSelected: false,
-          isExpanding: false,
-        };
-
-        if (!groups.has(report.rule)) {
-          groups.set(report.rule, []);
-        }
-        groups.get(report.rule)!.push(feature);
-      });
-
-      const ruleGroupsArray: RuleGroup[] = Array.from(groups.entries()).map(
-        ([ruleName, features]) => ({ ruleName, features })
-      );
-
-      setRuleGroups(ruleGroupsArray);
-  };
 
   // Listen for XML parsing completion
   useEffect(() => {
