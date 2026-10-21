@@ -1,3 +1,4 @@
+import { expandSctConstProducts } from '@/lib/sct-const-expander';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   ExpandCodesRequest,
@@ -6,7 +7,7 @@ import {
   ValueSetGroup,
   EmisValue,
 } from '@/lib/types';
-import { buildBatchedEclQuery, buildBatchedEclQueryWithoutRefsets, buildUkProductEcl, buildModificationOfEcl, separateRefsets, buildFormattedEclExpression } from '@/lib/ecl-builder';
+import { buildBatchedEclQuery, buildBatchedEclQueryWithoutRefsets, separateRefsets, buildFormattedEclExpression } from '@/lib/ecl-builder';
 import {
   expandEclQuery,
   translateEmisCodesToSnomed,
@@ -135,47 +136,11 @@ async function expandSingleValueSet(
       const substanceCode = sctConstValue.translatedSnomedCode;
 
       try {
-        // Two-step approach: First find modifications, then find UK Products
-        // Step 1: Find all substances that are modifications of the base substance
-        const modificationEcl = buildModificationOfEcl(substanceCode);
-        console.log(`  Step 1: Finding modifications of substance ${substanceCode}: ${modificationEcl}`);
-        
-        // Track modification ECL for display
-        modificationEclExpressions.push(modificationEcl);
-        
-        let modifications: any[] = [];
-        try {
-          modifications = await expandEclQuery(modificationEcl);
-          console.log(`  -> Found ${modifications.length} modifications of substance ${substanceCode}`);
-        } catch (modError) {
-          console.warn(`  ⚠️  Error finding modifications for ${substanceCode}, continuing with base substance only:`, modError);
-          // Continue with just the base substance if modification query fails
-        }
-        
-        // Step 2: Build ECL to find UK Products with the base substance AND all its modifications
-        const substanceCodes = [substanceCode, ...modifications.map(m => m.code)];
-        console.log(`  Step 2: Querying UK Products for ${substanceCodes.length} substance(s) (base + modifications)`);
-        
-        // Build combined ECL query for all substances
-        let combinedUkProductEcl: string;
-        if (substanceCodes.length === 1) {
-          // Only base substance, no modifications found
-          combinedUkProductEcl = buildUkProductEcl(substanceCode);
-        } else {
-          // Multiple substances - create OR expression with parentheses around each term
-          const ukProductEcls = substanceCodes.map(code => `(${buildUkProductEcl(code)})`);
-          combinedUkProductEcl = ukProductEcls.join(' OR ');
-        }
-        
-        console.log(`  Expanding UK Products: ${combinedUkProductEcl.substring(0, 200)}${combinedUkProductEcl.length > 200 ? '...' : ''}`);
-
-        // Expand the combined ECL query
-        const products = await expandEclQuery(combinedUkProductEcl);
-        console.log(`  -> Found ${products.length} UK Products for substance ${substanceCode} and its modifications`);
-
-        // Always track the ECL expression for display (even if no products found)
-        // This ensures the displayed ECL accurately reflects what was queried
-        ukProductEclExpressions.push(combinedUkProductEcl);
+        const { products, productEcl, modificationEcls } = await expandSctConstProducts(
+          substanceCode, vsExcludedCodes, expandEclQuery,
+        );
+        modificationEclExpressions.push(...modificationEcls);
+        ukProductEclExpressions.push(productEcl);
 
         // If we got products, mark this SCT_CONST code as successfully expanded
         if (products.length > 0) {
@@ -186,7 +151,7 @@ async function expandSingleValueSet(
             substanceCode,
             displayName: sctConstValue.displayName || substanceCode,
           });
-          console.warn(`  ⚠️  No UK Products found for substance ${substanceCode} (${sctConstValue.displayName || sctConstValue.originalCode}) or its ${modifications.length} modification(s). This may indicate: the substance is not available as a UK Product, the code is historical/inactive, or there's a data issue in the terminology server.`);
+          console.warn(`  ⚠️  No UK Products found for substance ${substanceCode} (${sctConstValue.displayName || sctConstValue.originalCode}) or its modifications. This may indicate: the substance is not available as a UK Product, the code is historical/inactive, or there's a data issue in the terminology server.`);
         }
 
         // Mark all products as from terminology server

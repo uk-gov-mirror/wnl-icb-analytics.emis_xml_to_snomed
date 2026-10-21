@@ -2,7 +2,7 @@
  * Client-side ValueSet expansion for batch extraction.
  *
  * Port of the server's expandSingleValueSet (rawMode): the browser drives the
- * fan-out (SCT_CONST two-step, RF2 refset fallback, 50-code ECL batches) and
+ * fan-out (SCT_CONST recursive expansion, RF2 refset fallback, 50-code ECL batches) and
  * the server only proxies single bounded terminology calls. This keeps every
  * function invocation short and its response small — no 300s timeout or 4.5MB
  * payload cap in the path — and makes each step individually retryable.
@@ -20,9 +20,8 @@ import {
 import {
   separateRefsets,
   buildBatchedEclQuery,
-  buildUkProductEcl,
-  buildModificationOfEcl,
 } from './ecl-builder';
+import { expandSctConstProducts } from './sct-const-expander';
 import { fetchApi, CancelledError } from './api-client';
 
 interface ValueWithMetadata {
@@ -129,7 +128,7 @@ export async function expandValueSetClientSide(
     };
   });
 
-  // === SCT_CONST codes: two-step UK Product expansion per substance ===
+  // === SCT_CONST codes: recursive UK Product expansion per substance ===
   const sctConstCodes = vsValues.filter((v) => v.codeSystem === 'SCT_CONST');
   const ukProductConcepts: SnomedConcept[] = [];
   const successfulSctConstCodes = new Set<string>();
@@ -148,23 +147,9 @@ export async function expandValueSetClientSide(
 
     const substanceCode = sctConstValue.translatedSnomedCode;
 
-    // Step 1: substances that are modifications of the base substance
-    let modifications: SnomedConcept[] = [];
-    try {
-      modifications = await expandEcl(buildModificationOfEcl(substanceCode), options);
-    } catch (error) {
-      if (error instanceof CancelledError) throw error;
-      console.warn(`Modification query failed for ${substanceCode}, continuing with base substance:`, error);
-    }
-
-    // Step 2: UK Products containing the base substance or any modification
-    const substanceCodes = [substanceCode, ...modifications.map((m) => m.code)];
-    const ukProductEcl =
-      substanceCodes.length === 1
-        ? buildUkProductEcl(substanceCode)
-        : substanceCodes.map((code) => `(${buildUkProductEcl(code)})`).join(' OR ');
-
-    const products = await expandEcl(ukProductEcl, options);
+    const { products } = await expandSctConstProducts(
+      substanceCode, excludedCodes, (ecl) => expandEcl(ecl, options),
+    );
 
     if (products.length > 0) {
       successfulSctConstCodes.add(sctConstValue.originalCode);
