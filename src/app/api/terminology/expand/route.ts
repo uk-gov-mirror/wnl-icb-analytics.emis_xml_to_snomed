@@ -1,4 +1,4 @@
-import { resolveExceptions, exceptionError } from '@/lib/exception-resolver';
+import { resolveExceptions, exceptionError, exceptionExclusions } from '@/lib/exception-resolver';
 import { buildExceptionsMetadata } from '@/lib/batch-assembly';
 import { expandSctConstProducts } from '@/lib/sct-const-expander';
 import { NextRequest, NextResponse } from 'next/server';
@@ -13,6 +13,7 @@ import { buildBatchedEclQuery, buildBatchedEclQueryWithoutRefsets, separateRefse
 import {
   expandEclQuery,
   findPreparationCandidates,
+  findInactivePreparationCandidates,
   translateEmisCodesToSnomed,
   resolveHistoricalConcepts
 } from '@/lib/terminology-client';
@@ -65,12 +66,12 @@ async function expandSingleValueSet(
   
   const resolutions = await resolveExceptions(
     vsOriginalExcludedCodes.map((code: string, idx: number) => ({ code, displayName: vsOriginalExcludedDisplayNames[idx] })),
-    Object.fromEntries(codeToSnomedMap), Object.fromEntries(historicalMap), findPreparationCandidates,
+    Object.fromEntries(codeToSnomedMap), Object.fromEntries(historicalMap), findPreparationCandidates, findInactivePreparationCandidates,
   );
   const resolutionError = exceptionError(resolutions);
   if (resolutionError) throw new Error(resolutionError);
-  const vsExcludedCodes = resolutions.flatMap(r => r.code ? [r.code] : []);
-  const vsExcludedSet = new Set(vsExcludedCodes);
+  const { descendantCodes: vsExcludedCodes, exactCodes } = exceptionExclusions(resolutions);
+  const vsExcludedSet = new Set([...vsExcludedCodes, ...exactCodes]);
 
   // Build values array for this specific ValueSet
   const vsValues: ValueWithMetadata[] = mapping.codeIndices.map((idx: number) => {
@@ -121,7 +122,7 @@ async function expandSingleValueSet(
 
       try {
         const { products, productEcl, modificationEcls } = await expandSctConstProducts(
-          substanceCode, vsExcludedCodes, expandEclQuery,
+          substanceCode, vsExcludedCodes, expandEclQuery, exactCodes,
         );
         modificationEclExpressions.push(...modificationEcls);
         ukProductEclExpressions.push(productEcl);
@@ -271,7 +272,7 @@ async function expandSingleValueSet(
 
       for (let i = 0; i < valuesForEcl.length; i += BATCH_SIZE) {
         const batch = valuesForEcl.slice(i, i + BATCH_SIZE);
-        const batchEclExpression = buildBatchedEclQuery(batch, vsExcludedCodes);
+        const batchEclExpression = buildBatchedEclQuery(batch, vsExcludedCodes, undefined, exactCodes);
 
         try {
           const batchConcepts = await expandEclQuery(batchEclExpression);
@@ -293,7 +294,7 @@ async function expandSingleValueSet(
         }
       }
     } else {
-      const eclExpression = buildBatchedEclQuery(valuesForEcl, vsExcludedCodes);
+      const eclExpression = buildBatchedEclQuery(valuesForEcl, vsExcludedCodes, undefined, exactCodes);
       try {
         const eclConcepts = await expandEclQuery(eclExpression);
         console.log(`  -> Got ${eclConcepts.length} concepts from terminology server for ValueSet ${mapping.valueSetIndex + 1}`);
@@ -531,7 +532,7 @@ async function expandSingleValueSet(
   }
   
   // Build the base ECL expression for regular codes
-  let eclExpression = buildFormattedEclExpression(eclValues, vsExcludedCodes, allConceptsMap);
+  let eclExpression = buildFormattedEclExpression(eclValues, vsExcludedCodes, allConceptsMap, exactCodes);
 
   // Combine with UK Product ECL expressions for SCT_CONST codes
   // The UK Product ECL expressions already include all substances (base + modifications)

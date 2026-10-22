@@ -9,7 +9,7 @@ import { formatForSql } from './sql-formatter';
 import { prepareValueSetForExpansion } from './valueset-expansion';
 import { buildFormattedEclExpression } from './ecl-builder';
 import { generateValueSetFriendlyName, generateValueSetId } from './valueset-utils';
-import { ExceptionResolution, namesPreparation } from './exception-resolver';
+import { ExceptionResolution, namesPreparation, exceptionExclusions } from './exception-resolver';
 
 export interface OriginalCodeMetadata {
   originalCode: string;
@@ -35,6 +35,9 @@ export interface ExceptionMetadata {
   translatedToSnomedCode: string | null;
   includedInEcl: boolean;
   translationError: string | null;
+  resolutionStatus?: ExceptionResolution['status'];
+  includeDescendants?: boolean;
+  resolutionReason?: string;
 }
 
 /** Build original codes metadata from raw inputs and pre-computed maps */
@@ -145,7 +148,10 @@ export function buildExceptionsMetadata(
       originalExcludedDisplay: originalDisplay,
       translatedToSnomedCode: resolution?.code || null,
       includedInEcl: !!resolution?.code && !resolution.error,
-      translationError: resolution?.error || (resolution?.code ? null : 'Preparation exception requires reconciliation'),
+      translationError: resolution ? resolution.error : 'Preparation exception requires reconciliation',
+      resolutionStatus: resolution?.status,
+      includeDescendants: resolution?.includeDescendants,
+      resolutionReason: resolution?.reason,
     };
 
     if (!translatedCode) {
@@ -252,10 +258,8 @@ export function buildNormalizedTables(
         isRefset: prepared.isRefset[idx],
       };
     });
-    const resolvedExcludedCodes = buildExceptionsMetadata(prepared.excludedCodes,
-      prepared.excludedDisplayNames, translations, historical, raw?.exceptionResolutions)
-      .flatMap(e => e.includedInEcl && e.translatedToSnomedCode ? [e.translatedToSnomedCode] : []);
-    const eclExpression = buildFormattedEclExpression(eclValues, resolvedExcludedCodes);
+    const { descendantCodes, exactCodes } = exceptionExclusions(raw?.exceptionResolutions || []);
+    const eclExpression = buildFormattedEclExpression(eclValues, descendantCodes, undefined, exactCodes);
 
 
     const pushOriginalCodes = (originalCodes: OriginalCodeMetadata[]) => {

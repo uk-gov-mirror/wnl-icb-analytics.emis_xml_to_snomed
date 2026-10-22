@@ -94,6 +94,15 @@ Stores excluded codes for each valueset with translation tracking.
 | included_in_ecl | BOOLEAN | Whether code was included in ECL MINUS clause | |
 | translation_error | VARCHAR | Error message if translation failed | NULLABLE |
 
+Local extraction also writes `exception_resolution_audit.json`. It records each
+exception occurrence's target, resolution status, descendant scope and reason.
+`resolved_family` removes an exact active preparation family or mapped clinical
+family. `inactive_exact` removes an exact inactive dm+d product and its
+descendants. `legacy_exact` keeps the loaded exact target, including a null
+target, without descendant subtraction. See the local extraction instructions in
+`README.md` for the loaded-target snapshot. These fields are audit metadata and
+do not add columns to the exception CSV.
+
 ## Indexes
 
 - `idx_valuesets_report_id` on `valuesets(report_id)`

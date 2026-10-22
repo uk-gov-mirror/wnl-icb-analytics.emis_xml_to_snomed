@@ -3,10 +3,10 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { parseEmisXml } from '../src/lib/xml-parser';
-import { generateExpansionKey, generateValueSetHash } from '../src/lib/valueset-utils';
+import { generateExpansionKey, generateValueSetHash, generateValueSetId } from '../src/lib/valueset-utils';
 import { buildNormalizedTables, ExtractionInstance } from '../src/lib/batch-assembly';
 import { expandValueSetClientSide } from '../src/lib/client-valueset-expander';
-import { batchTranslateEmisCodes, batchResolveHistorical, expandEclPage, findPreparationCandidates, getConceptMapVersions } from '../src/lib/terminology-client';
+import { batchTranslateEmisCodes, batchResolveHistorical, expandEclPage, findPreparationCandidates, findInactivePreparationCandidates, getConceptMapVersions } from '../src/lib/terminology-client';
 import { detectRF2Version } from '../src/lib/rf2-version';
 import { resolveExceptions } from '../src/lib/exception-resolver';
 import { expandRefsetsFromRf2 } from '../src/lib/rf2-refset-parser';
@@ -15,8 +15,9 @@ import { normalizedTableColumns } from '../src/lib/normalized-table-columns';
 import { TranslatedCode, RawValueSetExpansion } from '../src/lib/types';
 
 async function main() {
-  const [xmlPath, outputPath, filter = 'strict'] = process.argv.slice(2);
-  if (!xmlPath || !outputPath || !['strict', 'all'].includes(filter)) throw Error('Usage: npx tsx scripts/extract-xml.ts XML OUTPUT [strict|all]');
+  const [xmlPath, outputPath, filter = 'strict', legacyTargetsPath] = process.argv.slice(2);
+  if (!xmlPath || !outputPath || !['strict', 'all'].includes(filter)) throw Error('Usage: npx tsx scripts/extract-xml.ts XML OUTPUT [strict|all] [LEGACY_TARGETS_JSON]');
+  const legacyTargets: Record<string, string | null> | undefined = legacyTargetsPath ? JSON.parse(readFileSync(legacyTargetsPath, 'utf8')) : undefined;
   const out = resolve(outputPath);
   const cacheDir = join(out, 'terminology-cache');
   mkdirSync(cacheDir, { recursive: true });
@@ -57,7 +58,7 @@ async function main() {
     const body = JSON.parse(init!.body as string);
     if (input === '/api/terminology/ecl-expand') return Response.json({ success: true, ...await expandEclPage(body.ecl, body.offset, body.count) });
     if (input === '/api/terminology/resolve-exceptions') return Response.json({ success: true,
-      resolutions: await resolveExceptions(body.exceptions, body.translations, body.historical, findPreparationCandidates) });
+      resolutions: await resolveExceptions(body.exceptions, body.translations, body.historical, findPreparationCandidates, findInactivePreparationCandidates, legacyTargets) });
     if (input === '/api/terminology/resolve-historical') return Response.json({ success: true, resolutions: await batchResolveHistorical(body.conceptIds) });
     if (input === '/api/terminology/rf2-refset') {
       const found = await expandRefsetsFromRf2(body.refsetIds);
@@ -101,8 +102,14 @@ async function main() {
   }
   writeFileSync(join(out, 'tables.json'), JSON.stringify(tables));
   writeFileSync(join(out, 'expansions.json'), JSON.stringify(Object.fromEntries(expanded)));
+  writeFileSync(join(out, 'exception_resolution_audit.json'), JSON.stringify(instances.flatMap(i =>
+    (expanded.get(i.expansionKey!)?.exceptionResolutions || []).map(r => ({
+      valueset_id: generateValueSetId(i.report.id, i.hash, i.vsIndex),
+      original_display: i.vs.exceptions.find(e => e.code === r.originalCode)?.displayName || '', ...r,
+    }))), null, 2));
   writeFileSync(join(out, 'manifest.json'), JSON.stringify({ xml: resolve(xmlPath), xmlSha256: createHash('sha256').update(readFileSync(xmlPath)).digest('hex'),
-    generatedAt: new Date().toISOString(), filter, conceptMaps: getConceptMapVersions(), rf2: detectRF2Version(),
+    generatedAt: new Date().toISOString(), filter,
+    legacyTargetsSha256: legacyTargetsPath ? createHash('sha256').update(readFileSync(legacyTargetsPath)).digest('hex') : null, conceptMaps: getConceptMapVersions(), rf2: detectRF2Version(),
     counts: Object.fromEntries(Object.entries(tables).map(([key, rows]) => [key, rows.length])),
     quarantined: tables.valuesets.filter(v => v.expansion_error), equivalenceCounts: Object.fromEntries([...new Set(Object.values(equivalences))]
       .map(e => [e, Object.values(equivalences).filter(x => x === e).length])) }, null, 2));

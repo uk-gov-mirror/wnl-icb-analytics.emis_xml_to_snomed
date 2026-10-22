@@ -193,6 +193,7 @@ export interface FhirValueSetExpansion {
 }
 
 export interface FhirConcept {
+  inactive?: boolean;
   system: string;
   code: string;
   display: string;
@@ -283,6 +284,9 @@ export interface ValueSetGroup {
     translatedToSnomedCode: string | null;
     includedInEcl: boolean;
     translationError: string | null;
+    resolutionStatus?: import('./exception-resolver').ExceptionResolution['status'];
+    includeDescendants?: boolean;
+    resolutionReason?: string;
   }>;
 }
 

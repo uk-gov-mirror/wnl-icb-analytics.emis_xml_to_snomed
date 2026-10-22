@@ -22,7 +22,7 @@ import {
   buildBatchedEclQuery,
 } from './ecl-builder';
 import { expandSctConstProducts } from './sct-const-expander';
-import { ExceptionResolution, exceptionError } from './exception-resolver';
+import { ExceptionResolution, exceptionError, exceptionExclusions } from './exception-resolver';
 import { fetchApi, CancelledError } from './api-client';
 
 interface ValueWithMetadata {
@@ -111,8 +111,8 @@ export async function expandValueSetClientSide(
     concepts: [], parentCodes: [], rf2RefsetIds: [], successfulSctConstCodes: [],
     sctConstNoProducts: {}, exceptionResolutions, expansionError,
   };
-  const excludedCodes = exceptionResolutions.flatMap(r => r.code ? [r.code] : []);
-  const excludedSet = new Set(excludedCodes);
+  const { descendantCodes: excludedCodes, exactCodes } = exceptionExclusions(exceptionResolutions);
+  const excludedSet = new Set([...excludedCodes, ...exactCodes]);
 
   // Build values with translated/resolved codes
   const vsValues: ValueWithMetadata[] = vs.values.map((v) => {
@@ -151,7 +151,7 @@ export async function expandValueSetClientSide(
     const substanceCode = sctConstValue.translatedSnomedCode;
 
     const { products } = await expandSctConstProducts(
-      substanceCode, excludedCodes, (ecl) => expandEcl(ecl, options),
+      substanceCode, excludedCodes, (ecl) => expandEcl(ecl, options), exactCodes,
     );
 
     if (products.length > 0) {
@@ -255,7 +255,7 @@ export async function expandValueSetClientSide(
     if (options.isCancelled?.()) throw new CancelledError();
 
     const batch = valuesForEcl.slice(i, i + ECL_BATCH_SIZE);
-    const ecl = buildBatchedEclQuery(batch, excludedCodes);
+    const ecl = buildBatchedEclQuery(batch, excludedCodes, undefined, exactCodes);
     if (!ecl) continue;
 
     const batchConcepts = await expandEcl(ecl, options);

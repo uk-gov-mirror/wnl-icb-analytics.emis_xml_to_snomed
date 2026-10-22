@@ -128,18 +128,35 @@ existing columns. The primary CodeID map relationship survives rejection by
 the expansion filter. A DrugCodeID relationship supplies the value only when
 the primary map has no match. `unmapped` means neither map returned a match.
 
-Named preparation exceptions require one exact active VMP/AMP match, including
-ingredient, strength, form and brand. Spacing and the position of the dosage
-form may differ. The resolver does not infer dose conversions, substitute an
-ingredient family or use a historical replacement without preparation evidence.
-Unresolved exceptions quarantine the whole value set: its metadata and reasons
-remain in the export, with no partial expanded-concept rows. Review every
-`expansion_error` before publication. Quarantined files cannot replace a complete
-published catalogue.
+Named preparation exceptions first require one exact active VMP/AMP match,
+including ingredient, strength, form and brand. Spacing and the position of the
+dosage form may differ. If no single active match exists, one exact inactive
+dm+d product may supply the exclusion without historical substitution. Both
+branches remove that product and its descendants, never the ingredient family.
+
+Other preparation exceptions use `legacy_exact`: subtract only the previously
+translated code, with no descendants. An untranslated exception keeps its
+previous omission. Terminology failures still stop expansion. The resolver does
+not infer dose conversions or substitute a preparation with an ingredient family.
+
+For a republish, supply a JSON object of loaded exception targets as the fourth
+argument to `extract-xml.ts`, after the filter. Each key is the original XML
+exception code and each value is its loaded SNOMED target or `null`. A missing
+fallback key fails extraction. An explicit `null` stays null even if the current
+ConceptMap has gained a translation. Without this snapshot, interactive expansion
+uses its existing ConceptMap and historical maps for exact-only fallback.
+
+`exception_resolution_audit.json` records every occurrence's target, status,
+`includeDescendants` and reason. Status is `resolved_family` for an exact active
+preparation or a mapped clinical exception, `inactive_exact` for an exact inactive
+preparation, or `legacy_exact` for a fallback that needs later review. These audit
+fields do not change the seven-column exception CSV. The manifest records the
+loaded-target file's SHA-256. Review the audit and every `expansion_error` before
+publication.
 
 Expansion reuse includes each instance's code system, child/refset flags and
 exception codes and names. The original code-only hash remains in the export.
-Complete exception descendants are removed after combining RF2, ordinary ECL
+Subtraction respects each exception's scope after combining RF2, ordinary ECL
 and recursive SCT_CONST product results.
 
 - Server Components used for API integration (OAuth, parsing)

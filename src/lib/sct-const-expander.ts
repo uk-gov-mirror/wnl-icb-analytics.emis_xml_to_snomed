@@ -6,6 +6,7 @@ export async function expandSctConstProducts(
   substanceCode: string,
   excludedCodes: string[],
   expand: (ecl: string) => Promise<SnomedConcept[]>,
+  exactExcludedCodes: string[] = [],
 ) {
   const substances = new Set([substanceCode]);
   const modificationEcls: string[] = [];
@@ -17,8 +18,8 @@ export async function expandSctConstProducts(
   }
 
   let productEcl = Array.from(substances, (code) => `(${buildUkProductEcl(code)})`).join(' OR ');
-  if (excludedCodes.length > 0) {
-    const exclusions = Array.from(new Set(excludedCodes), (code) => `<< ${code}`).join(' OR ');
+  if (excludedCodes.length > 0 || exactExcludedCodes.length > 0) {
+    const exclusions = [...Array.from(new Set(excludedCodes), (code) => `<< ${code}`), ...new Set(exactExcludedCodes)].join(' OR ');
     productEcl = `(${productEcl}) MINUS (${exclusions})`;
   }
   return { products: await expand(productEcl), productEcl, modificationEcls };

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveExceptions } from '@/lib/exception-resolver';
-import { findPreparationCandidates } from '@/lib/terminology-client';
+import { findPreparationCandidates, findInactivePreparationCandidates } from '@/lib/terminology-client';
 
 export async function POST(request: NextRequest) {
   try {
@@ -8,7 +8,7 @@ export async function POST(request: NextRequest) {
     if (!Array.isArray(exceptions) || exceptions.length > 200) {
       return NextResponse.json({ success: false, error: 'Provide at most 200 exceptions' }, { status: 400 });
     }
-    const resolutions = await resolveExceptions(exceptions, translations || {}, historical || {}, findPreparationCandidates);
+    const resolutions = await resolveExceptions(exceptions, translations || {}, historical || {}, findPreparationCandidates, findInactivePreparationCandidates);
     return NextResponse.json({ success: true, resolutions });
   } catch (error) {
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Exception resolution failed' }, { status: 500 });

@@ -29,6 +29,32 @@ export async function findPreparationCandidates(name: string): Promise<SnomedCon
   return candidates.map(c => ({ ...c, source: 'terminology_server' }));
 }
 
+/** Inactive products may have no current hierarchy membership. Require the dm+d namespace. */
+export async function findInactivePreparationCandidates(name: string): Promise<SnomedConcept[]> {
+  const token = await getAccessToken();
+  const url = new URL(`${TERMINOLOGY_SERVER_BASE}/ValueSet/$expand`);
+  url.searchParams.set('url', 'http://snomed.info/sct?fhir_vs');
+  url.searchParams.set('filter', name.match(/^[a-z][a-z-]*/i)?.[0] || name);
+  url.searchParams.set('activeOnly', 'false');
+  url.searchParams.set('count', '1000');
+  const candidates: SnomedConcept[] = [];
+  let offset = 0;
+  for (let page = 0; page < 100; page++) {
+    url.searchParams.set('offset', String(offset));
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30000) });
+    await handleFhirResponse(response, { context: 'resolving inactive preparation exception' });
+    const data: FhirValueSetExpansion = await response.json();
+    const rows = data.expansion?.contains || [];
+    // dm+d namespace 1000001, concept partition 10, then the SCTID check digit.
+    candidates.push(...rows.filter(c => c.inactive === true && /^\d+100000110\d$/.test(c.code))
+      .map(c => ({ ...c, source: 'terminology_server' as const })));
+    offset += rows.length;
+    if (typeof data.expansion?.total === 'number' ? offset >= data.expansion.total : rows.length < 1000) return candidates;
+    if (!rows.length) break;
+  }
+  throw new Error('Inactive preparation search is incomplete; reconcile the exception');
+}
+
 // Default: Only accept equivalent or narrower mappings
 const ACCEPTED_EQUIVALENCES = ['equivalent', 'narrower'];
 
