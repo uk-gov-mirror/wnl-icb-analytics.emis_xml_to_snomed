@@ -161,3 +161,14 @@ do not add columns to the exception CSV.
 - Export individual tables or all tables
 
 
+### Exception audit scope and equivalence
+
+The seven-column exceptions CSV retains one primary target per XML exception.
+`exception_resolution_audit.json` also carries scope, override version and any
+additional retained target. Consumers must use that audit to distinguish exact
+subtraction from descendant subtraction. The CSV alone does not express scope.
+
+Original-code `translation_equivalence` can describe a primary CodeID map match
+while the selected target comes from DrugCodeID fallback. `unmapped` also covers a
+match that returned no equivalence part. Manual exception overrides do not change
+that recorded ConceptMap relationship.

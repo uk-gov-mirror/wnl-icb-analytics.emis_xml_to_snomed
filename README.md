@@ -126,33 +126,90 @@ and a local terminology-response cache. It does not upload or load data.
 `original_codes.csv` appends `translation_equivalence` without changing the
 existing columns. The primary CodeID map relationship survives rejection by
 the expansion filter. A DrugCodeID relationship supplies the value only when
-the primary map has no match. `unmapped` means neither map returned a match.
+the primary map has no match. `unmapped` means neither map returned an equivalence part, including a match without that part.
+The exported equivalence can describe the primary map while the selected target
+comes from the DrugCodeID fallback. It does not describe a manual exception override.
 
-Named preparation exceptions first require one exact active VMP/AMP match,
-including ingredient, strength, form and brand. Spacing and the position of the
-dosage form may differ. If no single active match exists, one exact inactive
-dm+d product may supply the exclusion without historical substitution. Both
-branches remove that product and its descendants, never the ingredient family.
+Preparation systems (`SCT_CONST`, `SCT_PREP`, `DrugCodeID`) always use preparation
+resolution, including device names such as Turbohaler, Easyhaler, Ellipta and
+Respimat. Other systems use terminology-server ancestry. A substance, VTM or
+medicinal-product target enters preparation resolution rather than descendant
+subtraction. Targets with no current ancestry use exact-only fallback.
+The guard does not infer hierarchy level from a display name.
 
-Other preparation exceptions use `legacy_exact`: subtract only the previously
-translated code, with no descendants. An untranslated exception keeps its
-previous omission. Terminology failures still stop expansion. The resolver does
-not infer dose conversions or substitute a preparation with an ingredient family.
+One exact active dm+d VMP/AMP match removes its formulation family. Matching keeps
+ingredient-dose pairs, form, device, qualifiers and supplier. Spacing, singular
+forms and the position of the dosage form may differ. Ambiguous VMP/AMP matches
+remain unresolved. If no single active match exists, one exact inactive dm+d
+product supplies the exclusion without historical substitution. Descendants
+require verified VMP/AMP ancestry. Otherwise the inactive target is exact-only.
+A working active loaded product is retained alongside an inactive match.
 
-For a republish, supply a JSON object of loaded exception targets as the fourth
-argument to `extract-xml.ts`, after the filter. Each key is the original XML
-exception code and each value is its loaded SNOMED target or `null`. A missing
-fallback key fails extraction. An explicit `null` stays null even if the current
-ConceptMap has gained a translation. Without this snapshot, interactive expansion
-uses its existing ConceptMap and historical maps for exact-only fallback.
+Unresolved preparations use `legacy_exact`, which subtracts the loaded target
+without descendants. A loaded null stays null. This deliberately differs from
+June's ordinary-ECL branch, which subtracted descendants. Reproducing that branch
+for an unresolved preparation could subtract an ingredient family and would
+conflict with Eddie's policy. June's SCT_CONST and RF2 fallback scope was already
+exact-only. Structurally clinical exceptions retain descendant subtraction.
 
-`exception_resolution_audit.json` records every occurrence's target, status,
-`includeDescendants` and reason. Status is `resolved_family` for an exact active
-preparation or a mapped clinical exception, `inactive_exact` for an exact inactive
-preparation, or `legacy_exact` for a fallback that needs later review. These audit
-fields do not change the seven-column exception CSV. The manifest records the
-loaded-target file's SHA-256. Review the audit and every `expansion_error` before
-publication.
+For a republish, supply loaded exception targets and the existing catalogue:
+
+```powershell
+npx tsx scripts/extract-xml.ts "searches.xml" "output" all "legacy_exception_targets.json" "loaded_catalogue.json"
+```
+
+The target file maps original XML exception codes to loaded SNOMED targets or
+`null`. A missing fallback key quarantines that value set. Extraction continues;
+the publication gate must reject any quarantine. Without this snapshot,
+interactive expansion uses the current ConceptMap and historical maps for fallback.
+
+The catalogue is an object with `reports`, `valuesets`, `originalCodes` and
+`exceptions` arrays using the lower-case exported field names. A previous
+`tables.json` is accepted. Use the loaded catalogue for a first republish, then
+carry its identities into later catalogues. The extractor matches reports by
+`report_xml_id` and sets by report, code hash, child/refset flags and exceptions.
+A unique code-hash match also preserves a formerly collapsed instance. Ambiguous
+matches fail before output. Existing report IDs, value-set IDs, indices and
+friendly names survive, including CVD_65 `21e3808c-e538-c84d-ad57-ed87efd5ef46`
+and AF_61 `98b8e1d3-7db0-0653-9412-2fdf795e6f61`. New instances receive indices
+after the loaded maximum. `identity_mapping.json` records the result. Republish
+requires this file alongside loaded targets; identity restoration no longer
+depends on an external comparison script. The manifest hashes both inputs.
+
+`src/lib/exception-overrides.ts` contains versioned corrections requested in
+PR #6 round 2. They run before matching and fallback, validate targets against the
+terminology server and record their version and reason on every affected audit
+row. Prednesol retains its inactive named brand exactly, rather than substituting
+all generic soluble tablets. Loderm and topical erythromycin use the UK 2%
+solution VMP. Caduet uses a specific international clinical drug exactly because
+no UK dm+d preparation was found. These corrections do not change the inclusion
+ConceptMap or its recorded equivalence. The list contains the clinical sources;
+targets and membership differences still need publication review.
+
+`exception_translation_mismatches.json` lists translations with no shared
+ingredient or brand name token. It covers all translated exception codes and
+includes overridden candidates. This is a review queue, not an automatic mapping
+rule. Supplier renames and legitimate synonyms can appear. Dose or route errors
+that share an ingredient token still require manual review.
+
+`exception_resolution_audit.json` records every occurrence's targets, status,
+`includeDescendants`, override version and reason. `additionalCodes` records another explicit override target with the same scope.
+`additionalDescendantCodes` records a retained active loaded VMP/AMP family,
+independently of an inactive primary target's exact-only scope. Status is
+`resolved_family` for active preparations, mapped clinical exceptions and reviewed
+active overrides, `inactive_exact` for inactive matches, or `legacy_exact` for
+fallback. Read scope from `includeDescendants`, not status. These audit fields do
+not change the seven-column exception CSV. That CSV carries the primary target;
+its downstream consumers must not infer scope from the target alone. Review every
+`expansion_error`, override and membership diff before publication.
+
+Product searches page to the reported total, retry transient failures and reject
+repeated or missing pages. Exceptions resolve sequentially to avoid an unbounded
+search burst. The full server ECL path also checks completeness at a server page
+cap. The interactive resolver still accepts at most 200 exceptions per request,
+inactive search still scans the general SNOMED index, and large SCT_CONST
+exclusion lists still share one encoded URL. Those limits fail loudly; larger
+exports need a separate request-batching change.
 
 Expansion reuse includes each instance's code system, child/refset flags and
 exception codes and names. The original code-only hash remains in the export.

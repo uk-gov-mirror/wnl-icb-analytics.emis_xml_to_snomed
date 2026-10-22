@@ -11,48 +11,50 @@ const TERMINOLOGY_SERVER_BASE =
 const EMIS_CODE_SYSTEM = 'http://LDS.nhs/EMIS/CodeID/cs';
 const SNOMED_CODE_SYSTEM = 'http://snomed.info/sct';
 
-/** Search active VMP/AMPs. A name alone must never select an ingredient grouper. */
-export async function findPreparationCandidates(name: string): Promise<SnomedConcept[]> {
-  const token = await getAccessToken();
-  // Strength and form still take part in exact matching, not in the search filter.
-  const filter = name.match(/^[a-z][a-z-]*/i)?.[0] || name;
-  const url = new URL(`${TERMINOLOGY_SERVER_BASE}/ValueSet/$expand`);
-  url.searchParams.set('url', 'http://snomed.info/sct?fhir_vs=ecl/(<<10363801000001108 OR <<10363901000001102)');
-  url.searchParams.set('filter', filter || name);
-  url.searchParams.set('activeOnly', 'true');
-  url.searchParams.set('count', '1000');
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30000) });
-  await handleFhirResponse(response, { context: 'resolving preparation exception' });
-  const data: FhirValueSetExpansion = await response.json();
-  const candidates = data.expansion?.contains || [];
-  if ((data.expansion?.total || 0) > candidates.length) throw new Error('Preparation search is truncated; reconcile the exception');
-  return candidates.map(c => ({ ...c, source: 'terminology_server' }));
-}
-
-/** Inactive products may have no current hierarchy membership. Require the dm+d namespace. */
-export async function findInactivePreparationCandidates(name: string): Promise<SnomedConcept[]> {
+/** Page name searches even when the server caps the requested page size. */
+async function searchPreparations(name: string, active: boolean): Promise<SnomedConcept[]> {
   const token = await getAccessToken();
   const url = new URL(`${TERMINOLOGY_SERVER_BASE}/ValueSet/$expand`);
-  url.searchParams.set('url', 'http://snomed.info/sct?fhir_vs');
+  url.searchParams.set('url', active
+    ? 'http://snomed.info/sct?fhir_vs=ecl/(<<10363801000001108 OR <<10363901000001102)'
+    : 'http://snomed.info/sct?fhir_vs');
   url.searchParams.set('filter', name.match(/^[a-z][a-z-]*/i)?.[0] || name);
-  url.searchParams.set('activeOnly', 'false');
+  url.searchParams.set('activeOnly', String(active));
   url.searchParams.set('count', '1000');
   const candidates: SnomedConcept[] = [];
+  const seen = new Set<string>();
   let offset = 0;
   for (let page = 0; page < 100; page++) {
-    url.searchParams.set('offset', String(offset));
-    const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30000) });
-    await handleFhirResponse(response, { context: 'resolving inactive preparation exception' });
-    const data: FhirValueSetExpansion = await response.json();
+    if (offset || !active) url.searchParams.set('offset', String(offset));
+    const data = await withRetry(async () => {
+      const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30000) });
+      if (isRetryableStatus(response.status)) throw new Error(`Terminology server returned ${response.status}`);
+      await handleFhirResponse(response, { context: 'resolving preparation exception' });
+      return await response.json() as FhirValueSetExpansion;
+    }, { context: 'Preparation search' });
     const rows = data.expansion?.contains || [];
-    // dm+d namespace 1000001, concept partition 10, then the SCTID check digit.
-    candidates.push(...rows.filter(c => c.inactive === true && /^\d+100000110\d$/.test(c.code))
-      .map(c => ({ ...c, source: 'terminology_server' as const })));
+    for (const row of rows) {
+      if (seen.has(row.code)) throw new Error('Preparation search repeated a concept; offset may be ignored');
+      seen.add(row.code);
+      if (active || (row.inactive === true && /^\d+100000110\d$/.test(row.code))) candidates.push({ ...row, source: 'terminology_server' });
+    }
     offset += rows.length;
     if (typeof data.expansion?.total === 'number' ? offset >= data.expansion.total : rows.length < 1000) return candidates;
     if (!rows.length) break;
   }
-  throw new Error('Inactive preparation search is incomplete; reconcile the exception');
+  throw new Error('Preparation search is incomplete; reconcile the exception');
+}
+
+export const findPreparationCandidates = (name: string) => searchPreparations(name, true);
+export const findInactivePreparationCandidates = (name: string) => searchPreparations(name, false);
+
+/** VMP/AMP membership takes precedence: both also descend from VTM and medicinal product. */
+export async function classifyExceptionTarget(code: string): Promise<import('./exception-resolver').ExceptionTargetKind> {
+  if (!/^\d+$/.test(code)) throw new Error('Invalid exception target');
+  const ancestors = new Set((await expandEclQuery(`>> ${code}`)).map(c => c.code));
+  if (!ancestors.has(code) || !ancestors.has('138875005')) return 'unknown';
+  if (ancestors.has('10363801000001108') || ancestors.has('10363901000001102')) return 'preparation';
+  return ancestors.has('105590001') || ancestors.has('373873005') ? 'ingredient_family' : 'clinical';
 }
 
 // Default: Only accept equivalent or narrower mappings
@@ -834,14 +836,10 @@ export async function expandEclQuery(
     all.push(...concepts);
     offset += concepts.length;
 
-    if (concepts.length < PAGE_SIZE) break;
-    if (total >= 0 && all.length >= total) break;
+    if (new Set(all.map(c => c.code)).size !== all.length) throw new Error('Incomplete terminology expansion: repeated page');
+    if (total >= 0 && all.length >= total) return all;
+    if (concepts.length === 0) throw new Error('Incomplete terminology expansion: no further page returned');
   }
 
-  if (all.length === 0) {
-    const codeMatches = eclExpression.match(/\d{6,}/g);
-    console.warn(`⚠️ No concepts returned for ECL query (${codeMatches?.length || 0} codes)`);
-  }
-
-  return all;
+  throw new Error('Incomplete terminology expansion: page limit reached');
 }

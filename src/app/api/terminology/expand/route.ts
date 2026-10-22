@@ -14,6 +14,7 @@ import {
   expandEclQuery,
   findPreparationCandidates,
   findInactivePreparationCandidates,
+  classifyExceptionTarget,
   translateEmisCodesToSnomed,
   resolveHistoricalConcepts
 } from '@/lib/terminology-client';
@@ -66,7 +67,9 @@ async function expandSingleValueSet(
   
   const resolutions = await resolveExceptions(
     vsOriginalExcludedCodes.map((code: string, idx: number) => ({ code, displayName: vsOriginalExcludedDisplayNames[idx] })),
-    Object.fromEntries(codeToSnomedMap), Object.fromEntries(historicalMap), findPreparationCandidates, findInactivePreparationCandidates,
+    Object.fromEntries(codeToSnomedMap), Object.fromEntries(historicalMap), findPreparationCandidates, findInactivePreparationCandidates, undefined, {
+      codeSystem: codeSystems?.[mapping.codeIndices[0]], classifyTarget: classifyExceptionTarget, findExactTarget: expandEclQuery,
+    },
   );
   const resolutionError = exceptionError(resolutions);
   if (resolutionError) throw new Error(resolutionError);

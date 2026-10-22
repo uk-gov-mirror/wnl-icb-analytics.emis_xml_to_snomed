@@ -6,18 +6,22 @@ import { parseEmisXml } from '../src/lib/xml-parser';
 import { generateExpansionKey, generateValueSetHash, generateValueSetId } from '../src/lib/valueset-utils';
 import { buildNormalizedTables, ExtractionInstance } from '../src/lib/batch-assembly';
 import { expandValueSetClientSide } from '../src/lib/client-valueset-expander';
-import { batchTranslateEmisCodes, batchResolveHistorical, expandEclPage, findPreparationCandidates, findInactivePreparationCandidates, getConceptMapVersions } from '../src/lib/terminology-client';
+import { batchTranslateEmisCodes, batchResolveHistorical, expandEclPage, expandEclQuery, findPreparationCandidates, findInactivePreparationCandidates, classifyExceptionTarget, getConceptMapVersions } from '../src/lib/terminology-client';
 import { detectRF2Version } from '../src/lib/rf2-version';
 import { resolveExceptions } from '../src/lib/exception-resolver';
+import { preserveCatalogueIdentities } from '../src/lib/catalogue-identity';
+import { exceptionTranslationMismatches } from '../src/lib/exception-mismatches';
+import { EXCEPTION_OVERRIDES } from '../src/lib/exception-overrides';
 import { expandRefsetsFromRf2 } from '../src/lib/rf2-refset-parser';
 import { convertToCSV } from '../src/lib/csv-utils';
 import { normalizedTableColumns } from '../src/lib/normalized-table-columns';
 import { TranslatedCode, RawValueSetExpansion } from '../src/lib/types';
 
 async function main() {
-  const [xmlPath, outputPath, filter = 'strict', legacyTargetsPath] = process.argv.slice(2);
-  if (!xmlPath || !outputPath || !['strict', 'all'].includes(filter)) throw Error('Usage: npx tsx scripts/extract-xml.ts XML OUTPUT [strict|all] [LEGACY_TARGETS_JSON]');
+  const [xmlPath, outputPath, filter = 'strict', legacyTargetsPath, loadedCataloguePath] = process.argv.slice(2);
+  if (!xmlPath || !outputPath || !['strict', 'all'].includes(filter)) throw Error('Usage: npx tsx scripts/extract-xml.ts XML OUTPUT [strict|all] [LEGACY_TARGETS_JSON] [LOADED_CATALOGUE_JSON]');
   const legacyTargets: Record<string, string | null> | undefined = legacyTargetsPath ? JSON.parse(readFileSync(legacyTargetsPath, 'utf8')) : undefined;
+  if (legacyTargetsPath && !loadedCataloguePath) throw Error('Republish requires LOADED_CATALOGUE_JSON to preserve identities');
   const out = resolve(outputPath);
   const cacheDir = join(out, 'terminology-cache');
   mkdirSync(cacheDir, { recursive: true });
@@ -53,12 +57,17 @@ async function main() {
     if (response.ok) writeFileSync(file, JSON.stringify({ request, status: response.status, body: await response.clone().text() }));
     return response;
   };
+  const classifications = new Map<string, ReturnType<typeof classifyExceptionTarget>>();
+  const classify = (code: string) => {
+    if (!classifications.has(code)) classifications.set(code, classifyExceptionTarget(code));
+    return classifications.get(code)!;
+  };
   globalThis.fetch = async (input, init) => {
     if (!String(input).startsWith('/api/terminology/')) return upstreamFetch(input, init);
     const body = JSON.parse(init!.body as string);
     if (input === '/api/terminology/ecl-expand') return Response.json({ success: true, ...await expandEclPage(body.ecl, body.offset, body.count) });
     if (input === '/api/terminology/resolve-exceptions') return Response.json({ success: true,
-      resolutions: await resolveExceptions(body.exceptions, body.translations, body.historical, findPreparationCandidates, findInactivePreparationCandidates, legacyTargets) });
+      resolutions: await resolveExceptions(body.exceptions, body.translations, body.historical, findPreparationCandidates, findInactivePreparationCandidates, legacyTargets, { codeSystem: body.codeSystem, classifyTarget: classify, findExactTarget: expandEclQuery }) });
     if (input === '/api/terminology/resolve-historical') return Response.json({ success: true, resolutions: await batchResolveHistorical(body.conceptIds) });
     if (input === '/api/terminology/rf2-refset') {
       const found = await expandRefsetsFromRf2(body.refsetIds);
@@ -73,6 +82,8 @@ async function main() {
     Object.assign(translations, await batchTranslateEmisCodes(codes.slice(i, i + 200), filter as 'strict' | 'all', equivalences));
     console.log(`Translated ${Math.min(i + 200, codes.length)}/${codes.length}`);
   }
+  writeFileSync(join(out, 'exception_translation_mismatches.json'), JSON.stringify(exceptionTranslationMismatches(instances.flatMap(i => i.vs.exceptions), translations), null, 2));
+  writeFileSync(join(out, 'exception_overrides.json'), JSON.stringify(EXCEPTION_OVERRIDES, null, 2));
   writeFileSync(join(out, 'translations.json'), JSON.stringify({ translations, equivalences }, null, 2));
   const targets = [...new Set([...Object.values(translations).flatMap(t => t ? [t.code] : []),
     ...instances.filter(i => i.vs.codeSystem === 'SNOMED_CONCEPT').flatMap(i => i.vs.values.map(v => v.code))])];
@@ -96,6 +107,8 @@ async function main() {
     console.log(`Expanded ${++index}/${unique.length}; ${failed.size} quarantined/failed`);
   }
   const tables = buildNormalizedTables(document.reports, instances, expanded, failed, translations, historical, filter as 'strict' | 'all', equivalences);
+  const identities = loadedCataloguePath ? preserveCatalogueIdentities(tables, JSON.parse(readFileSync(loadedCataloguePath, 'utf8'))) : new Map<string, string>();
+  writeFileSync(join(out, 'identity_mapping.json'), JSON.stringify(Object.fromEntries(identities), null, 2));
   for (const [table, columns] of Object.entries(normalizedTableColumns)) {
     const name = table.replace(/[A-Z]/g, c => '_' + c.toLowerCase());
     writeFileSync(join(out, `${name}.csv`), convertToCSV(tables[table as keyof typeof tables], columns.map(c => c.key)));
@@ -104,10 +117,12 @@ async function main() {
   writeFileSync(join(out, 'expansions.json'), JSON.stringify(Object.fromEntries(expanded)));
   writeFileSync(join(out, 'exception_resolution_audit.json'), JSON.stringify(instances.flatMap(i =>
     (expanded.get(i.expansionKey!)?.exceptionResolutions || []).map(r => ({
-      valueset_id: generateValueSetId(i.report.id, i.hash, i.vsIndex),
+      valueset_id: identities.get(generateValueSetId(i.report.id, i.hash, i.vsIndex)) || generateValueSetId(i.report.id, i.hash, i.vsIndex),
       original_display: i.vs.exceptions.find(e => e.code === r.originalCode)?.displayName || '', ...r,
     }))), null, 2));
   writeFileSync(join(out, 'manifest.json'), JSON.stringify({ xml: resolve(xmlPath), xmlSha256: createHash('sha256').update(readFileSync(xmlPath)).digest('hex'),
+    loadedCatalogueSha256: loadedCataloguePath ? createHash('sha256').update(readFileSync(loadedCataloguePath)).digest('hex') : null,
+    exceptionOverridesSha256: createHash('sha256').update(JSON.stringify(EXCEPTION_OVERRIDES)).digest('hex'),
     generatedAt: new Date().toISOString(), filter,
     legacyTargetsSha256: legacyTargetsPath ? createHash('sha256').update(readFileSync(legacyTargetsPath)).digest('hex') : null, conceptMaps: getConceptMapVersions(), rf2: detectRF2Version(),
     counts: Object.fromEntries(Object.entries(tables).map(([key, rows]) => [key, rows.length])),

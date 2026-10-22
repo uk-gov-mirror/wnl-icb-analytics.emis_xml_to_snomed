@@ -104,7 +104,7 @@ export async function expandValueSetClientSide(
 ): Promise<RawValueSetExpansion> {
   const exceptionResolutions = vs.exceptions?.length
     ? (await fetchApi<{ resolutions: ExceptionResolution[] }>('/api/terminology/resolve-exceptions',
-      { exceptions: vs.exceptions, translations, historical }, { isCancelled: options.isCancelled })).resolutions
+      { exceptions: vs.exceptions, translations, historical, codeSystem: vs.codeSystem }, { isCancelled: options.isCancelled })).resolutions
     : [];
   const expansionError = exceptionError(exceptionResolutions);
   if (expansionError) return {
