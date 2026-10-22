@@ -16,7 +16,7 @@ async function searchPreparations(name: string, active: boolean): Promise<Snomed
   const token = await getAccessToken();
   const url = new URL(`${TERMINOLOGY_SERVER_BASE}/ValueSet/$expand`);
   url.searchParams.set('url', active
-    ? 'http://snomed.info/sct?fhir_vs=ecl/(<<10363801000001108 OR <<10363901000001102)'
+    ? 'http://snomed.info/sct?fhir_vs=ecl/(<10363801000001108 OR <10363901000001102)'
     : 'http://snomed.info/sct?fhir_vs');
   url.searchParams.set('filter', name.match(/^[a-z][a-z-]*/i)?.[0] || name);
   url.searchParams.set('activeOnly', String(active));
@@ -51,6 +51,7 @@ export const findInactivePreparationCandidates = (name: string) => searchPrepara
 /** VMP/AMP membership takes precedence: both also descend from VTM and medicinal product. */
 export async function classifyExceptionTarget(code: string): Promise<import('./exception-resolver').ExceptionTargetKind> {
   if (!/^\d+$/.test(code)) throw new Error('Invalid exception target');
+  if (code === '10363801000001108' || code === '10363901000001102') return 'ingredient_family';
   const ancestors = new Set((await expandEclQuery(`>> ${code}`)).map(c => c.code));
   if (!ancestors.has(code) || !ancestors.has('138875005')) return 'unknown';
   if (ancestors.has('10363801000001108') || ancestors.has('10363901000001102')) return 'preparation';

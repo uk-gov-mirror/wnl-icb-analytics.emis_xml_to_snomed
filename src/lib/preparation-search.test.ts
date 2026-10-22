@@ -23,6 +23,7 @@ test('active searches retry 429 and page through a smaller server page cap', asy
   await withFetch(async input => {
     const url = new URL(String(input));
     assert.equal(url.searchParams.get('activeOnly'), 'true');
+    assert.equal(url.searchParams.get('url'), 'http://snomed.info/sct?fhir_vs=ecl/(<10363801000001108 OR <10363901000001102)');
     const offset = Number(url.searchParams.get('offset') || 0);
     offsets.push(offset);
     if (++calls === 1) return new Response('', { status: 429 });
@@ -30,6 +31,14 @@ test('active searches retry 429 and page through a smaller server page cap', asy
   }, async () => {
     assert.equal((await findPreparationCandidates('Synthetic syrup')).length, 3);
     assert.deepEqual(offsets, [0, 0, 1, 2]);
+  });
+});
+
+test('VMP and AMP roots cannot authorise preparation descendant subtraction', async () => {
+  await withFetch(async () => { throw Error('Roots must be rejected before lookup'); }, async () => {
+    for (const root of ['10363801000001108', '10363901000001102']) {
+      assert.equal(await classifyExceptionTarget(root), 'ingredient_family');
+    }
   });
 });
 

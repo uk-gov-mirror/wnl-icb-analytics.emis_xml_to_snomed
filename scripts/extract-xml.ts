@@ -10,7 +10,7 @@ import { batchTranslateEmisCodes, batchResolveHistorical, expandEclPage, expandE
 import { detectRF2Version } from '../src/lib/rf2-version';
 import { resolveExceptions } from '../src/lib/exception-resolver';
 import { preserveCatalogueIdentities } from '../src/lib/catalogue-identity';
-import { exceptionTranslationMismatches } from '../src/lib/exception-mismatches';
+import { AppliedExceptionTarget, exceptionTranslationMismatches } from '../src/lib/exception-mismatches';
 import { EXCEPTION_OVERRIDES } from '../src/lib/exception-overrides';
 import { expandRefsetsFromRf2 } from '../src/lib/rf2-refset-parser';
 import { convertToCSV } from '../src/lib/csv-utils';
@@ -82,7 +82,6 @@ async function main() {
     Object.assign(translations, await batchTranslateEmisCodes(codes.slice(i, i + 200), filter as 'strict' | 'all', equivalences));
     console.log(`Translated ${Math.min(i + 200, codes.length)}/${codes.length}`);
   }
-  writeFileSync(join(out, 'exception_translation_mismatches.json'), JSON.stringify(exceptionTranslationMismatches(instances.flatMap(i => i.vs.exceptions), translations), null, 2));
   writeFileSync(join(out, 'exception_overrides.json'), JSON.stringify(EXCEPTION_OVERRIDES, null, 2));
   writeFileSync(join(out, 'translations.json'), JSON.stringify({ translations, equivalences }, null, 2));
   const targets = [...new Set([...Object.values(translations).flatMap(t => t ? [t.code] : []),
@@ -115,11 +114,26 @@ async function main() {
   }
   writeFileSync(join(out, 'tables.json'), JSON.stringify(tables));
   writeFileSync(join(out, 'expansions.json'), JSON.stringify(Object.fromEntries(expanded)));
-  writeFileSync(join(out, 'exception_resolution_audit.json'), JSON.stringify(instances.flatMap(i =>
+  const audit = instances.flatMap(i =>
     (expanded.get(i.expansionKey!)?.exceptionResolutions || []).map(r => ({
       valueset_id: identities.get(generateValueSetId(i.report.id, i.hash, i.vsIndex)) || generateValueSetId(i.report.id, i.hash, i.vsIndex),
       original_display: i.vs.exceptions.find(e => e.code === r.originalCode)?.displayName || '', ...r,
-    }))), null, 2));
+    })));
+  writeFileSync(join(out, 'exception_resolution_audit.json'), JSON.stringify(audit, null, 2));
+  const appliedTargets: AppliedExceptionTarget[] = audit.flatMap(r => [
+    { originalCode: r.originalCode, code: r.code, display: r.display, valuesetId: r.valueset_id, includeDescendants: r.includeDescendants },
+    ...(r.additionalCodes || []).map(code => ({ originalCode: r.originalCode, code, valuesetId: r.valueset_id, includeDescendants: r.includeDescendants })),
+    ...(r.additionalDescendantCodes || []).map(code => ({ originalCode: r.originalCode, code, valuesetId: r.valueset_id, includeDescendants: true })),
+    ...(r.additionalExactCodes || []).map(code => ({ originalCode: r.originalCode, code, valuesetId: r.valueset_id, includeDescendants: false })),
+  ]);
+  const displays = new Map(Object.values(translations).flatMap(t => t?.display ? [[t.code, t.display] as const] : []));
+  const missingDisplays = [...new Set(appliedTargets.filter(t => t.code && !t.display && !displays.has(t.code)).map(t => t.code!))];
+  for (let i = 0; i < missingDisplays.length; i += 50) {
+    for (const target of await expandEclQuery(missingDisplays.slice(i, i + 50).join(' OR '))) displays.set(target.code, target.display);
+  }
+  for (const target of appliedTargets) if (target.code && !target.display) target.display = displays.get(target.code);
+  writeFileSync(join(out, 'exception_translation_mismatches.json'), JSON.stringify(
+    exceptionTranslationMismatches(instances.flatMap(i => i.vs.exceptions), translations, appliedTargets), null, 2));
   writeFileSync(join(out, 'manifest.json'), JSON.stringify({ xml: resolve(xmlPath), xmlSha256: createHash('sha256').update(readFileSync(xmlPath)).digest('hex'),
     loadedCatalogueSha256: loadedCataloguePath ? createHash('sha256').update(readFileSync(loadedCataloguePath)).digest('hex') : null,
     exceptionOverridesSha256: createHash('sha256').update(JSON.stringify(EXCEPTION_OVERRIDES)).digest('hex'),

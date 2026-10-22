@@ -143,13 +143,16 @@ forms and the position of the dosage form may differ. Ambiguous VMP/AMP matches
 remain unresolved. If no single active match exists, one exact inactive dm+d
 product supplies the exclusion without historical substitution. Descendants
 require verified VMP/AMP ancestry. Otherwise the inactive target is exact-only.
-A working active loaded product is retained alongside an inactive match.
+A loaded VMP/AMP is retained exactly alongside an inactive match. Retaining a
+loaded VMP never widens its exclusion to its AMPs. The VMP and AMP root concepts
+are not preparations and cannot authorise descendant subtraction.
 
 Unresolved preparations use `legacy_exact`, which subtracts the loaded target
 without descendants. A loaded null stays null. This deliberately differs from
 June's ordinary-ECL branch, which subtracted descendants. Reproducing that branch
 for an unresolved preparation could subtract an ingredient family and would
-conflict with Eddie's policy. June's SCT_CONST and RF2 fallback scope was already
+conflict with the policy that ingredient families must never be subtracted.
+June's SCT_CONST and RF2 fallback scope was already
 exact-only. Structurally clinical exceptions retain descendant subtraction.
 
 For a republish, supply loaded exception targets and the existing catalogue:
@@ -176,8 +179,8 @@ after the loaded maximum. `identity_mapping.json` records the result. Republish
 requires this file alongside loaded targets; identity restoration no longer
 depends on an external comparison script. The manifest hashes both inputs.
 
-`src/lib/exception-overrides.ts` contains versioned corrections requested in
-PR #6 round 2. They run before matching and fallback, validate targets against the
+`src/lib/exception-overrides.ts` contains versioned XML exception corrections.
+They run before matching and fallback, validate targets against the
 terminology server and record their version and reason on every affected audit
 row. Prednesol retains its inactive named brand exactly, rather than substituting
 all generic soluble tablets. Loderm and topical erythromycin use the UK 2%
@@ -187,18 +190,26 @@ Caduet uses a specific international clinical drug exactly because
 no UK dm+d preparation was found. These corrections do not change the inclusion
 ConceptMap or its recorded equivalence. The list contains the clinical sources;
 targets and membership differences still need publication review.
+Five generic fluticasone and beclometasone nasal-spray exceptions use their active
+nasal VMPs and AMP descendants. Non-nasal inhaled preparations remain included.
 
-`exception_translation_mismatches.json` lists translations with no shared
-ingredient or brand name token. It covers all translated exception codes and
-includes overridden candidates. This is a review queue, not an automatic mapping
+`exception_translation_mismatches.json` checks both current translations and
+the targets actually applied, including loaded fallback and override targets.
+It records `applied_target`, `applied_target_display`, scope and affected value-set
+IDs beside the translation. A null applied target means no subtraction for that
+exception. Targets without a display also need review. The queue includes names
+with no shared ingredient or brand token, including overridden candidates.
+This is a review queue, not an automatic mapping
 rule. Supplier renames and legitimate synonyms can appear. Dose or route errors
 that share an ingredient token still require manual review.
+The [upstream reporting note](docs/exception-map-upstream-reporting.md) lists
+reviewed incorrect targets and their published map versions.
 
 `exception_resolution_audit.json` records every occurrence's targets, status,
 `includeDescendants`, override version and reason. `additionalCodes` records another explicit override target with the same scope.
-`additionalDescendantCodes` records a retained active loaded VMP/AMP family,
-independently of an inactive primary target's exact-only scope.
-`additionalExactCodes` records exact exclusions alongside a primary family. Status is
+`additionalDescendantCodes` records extra descendant targets with independent
+scope. Retained loaded products now use `additionalExactCodes`, which also records
+exact exclusions alongside a primary family. Status is
 `resolved_family` for active preparations, mapped clinical exceptions and reviewed
 active overrides, `inactive_exact` for inactive matches, or `legacy_exact` for
 fallback. Read scope from `includeDescendants`, not status. These audit fields do

@@ -1,0 +1,134 @@
+{
+  "ecl": "<<39111911000001107",
+  "total": 32,
+  "concepts": [
+    {
+      "display": "Beclo-Aqua 50micrograms/dose nasal spray (Galen Ltd)",
+      "code": "2940211000001109"
+    },
+    {
+      "display": "Beclometasone 50micrograms/dose nasal spray",
+      "code": "39111911000001107"
+    },
+    {
+      "display": "Beclometasone 50micrograms/dose nasal spray (A A H Pharmaceuticals Ltd)",
+      "code": "2938811000001107"
+    },
+    {
+      "display": "Beclometasone 50micrograms/dose nasal spray (Actavis UK Ltd)",
+      "code": "2939011000001106"
+    },
+    {
+      "display": "Beclometasone 50micrograms/dose nasal spray (Alliance Healthcare (Distribution) Ltd)",
+      "code": "2939811000001100"
+    },
+    {
+      "display": "Beclometasone 50micrograms/dose nasal spray (DE Pharmaceuticals)",
+      "code": "30027511000001108"
+    },
+    {
+      "display": "Beclometasone 50micrograms/dose nasal spray (Kent Pharma (UK) Ltd)",
+      "code": "2939411000001102"
+    },
+    {
+      "display": "Beclometasone 50micrograms/dose nasal spray (Mawdsley-Brooks & Company Ltd)",
+      "code": "29998711000001104"
+    },
+    {
+      "display": "Beclometasone 50micrograms/dose nasal spray (Medihealth (Northern) Ltd)",
+      "code": "38804811000001108"
+    },
+    {
+      "display": "Beclometasone 50micrograms/dose nasal spray (Phoenix Healthcare Distribution Ltd)",
+      "code": "17794911000001106"
+    },
+    {
+      "display": "Beclometasone 50micrograms/dose nasal spray (PLIVA Pharma Ltd)",
+      "code": "15069111000001105"
+    },
+    {
+      "display": "Beclometasone 50micrograms/dose nasal spray (Sigma Pharmaceuticals Plc)",
+      "code": "29773711000001106"
+    },
+    {
+      "display": "Beclometasone 50micrograms/dose nasal spray (Teva UK Ltd)",
+      "code": "9189011000001107"
+    },
+    {
+      "display": "Beclometasone 50micrograms/dose nasal spray (Vantage)",
+      "code": "11578811000001101"
+    },
+    {
+      "display": "Beclometasone 50micrograms/dose nasal spray (Viatris UK Healthcare Ltd)",
+      "code": "2939211000001101"
+    },
+    {
+      "display": "Beclometasone 50micrograms/dose nasal spray (Waymade Healthcare Plc)",
+      "code": "21782111000001102"
+    },
+    {
+      "display": "Beclometasone Hayfever Relief 50micrograms/dose nasal spray (Numark Ltd)",
+      "code": "13646311000001107"
+    },
+    {
+      "display": "Beconase Aqueous 50micrograms/dose nasal spray (DE Pharmaceuticals)",
+      "code": "19872411000001107"
+    },
+    {
+      "display": "Beconase Aqueous 50micrograms/dose nasal spray (GlaxoSmithKline UK Ltd)",
+      "code": "2940411000001108"
+    },
+    {
+      "display": "Beconase Aqueous 50micrograms/dose nasal spray (Lexon (UK) Ltd)",
+      "code": "29979411000001108"
+    },
+    {
+      "display": "Beconase Aqueous 50micrograms/dose nasal spray (Mawdsley-Brooks & Company Ltd)",
+      "code": "16341711000001104"
+    },
+    {
+      "display": "Beconase Aqueous 50micrograms/dose nasal spray (Waymade Healthcare Plc)",
+      "code": "5355511000001107"
+    },
+    {
+      "display": "Beconase Hayfever 50micrograms/dose nasal spray (Omega Pharma Ltd)",
+      "code": "2942511000001108"
+    },
+    {
+      "display": "Beconase Hayfever Relief for Adults 50micrograms/dose nasal spray (Omega Pharma Ltd)",
+      "code": "6497711000001106"
+    },
+    {
+      "display": "Care Hayfever Relief 50micrograms/dose nasal spray (Thornton & Ross Ltd)",
+      "code": "2946911000001102"
+    },
+    {
+      "display": "Nasobec Aqueous 50micrograms/dose nasal spray (Teva UK Ltd)",
+      "code": "2940611000001106"
+    },
+    {
+      "display": "Nasobec Hayfever 50micrograms/dose nasal spray (Teva UK Ltd)",
+      "code": "2946111000001100"
+    },
+    {
+      "display": "Numark Hayfever Relief 50micrograms/dose nasal spray (Numark Ltd)",
+      "code": "24664011000001108"
+    },
+    {
+      "display": "Pollenase Hayfever 50micrograms/dose nasal spray (East Midlands Pharma Ltd)",
+      "code": "4699711000001105"
+    },
+    {
+      "display": "Pollenase Hayfever Relief for Adults 50micrograms/dose nasal spray (East Midlands Pharma Ltd)",
+      "code": "20119311000001105"
+    },
+    {
+      "display": "Rino Clenil 50micrograms/dose nasal spray (Chiesi Ltd)",
+      "code": "4636511000001101"
+    },
+    {
+      "display": "Vivabec 50micrograms/dose nasal spray (Lexon (UK) Ltd)",
+      "code": "2940911000001100"
+    }
+  ]
+}

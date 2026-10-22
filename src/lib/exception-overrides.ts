@@ -1,4 +1,4 @@
-/** PR #6 round 2 corrections. Clinical sources and remaining review gates are in README.md. */
+/** Versioned XML exception corrections, validated against the cited product definitions. */
 export const EXCEPTION_OVERRIDES: Array<{
   version: number; emisCode: string; emisDisplay: string;
   mode: 'dmd_family' | 'inactive_exact' | 'international_exact';
@@ -20,5 +20,20 @@ export const EXCEPTION_OVERRIDES: Array<{
     targets: [{ code: '41739411000001106', display: 'Erythromycin 2% solution' }],
     exactTargets: [{ code: '332346003', display: 'Erythromycin 20 mg/mL cutaneous solution' }],
     reason: 'The XML explicitly excludes topical erythromycin solution. Exclude the UK 2% solution VMP and its AMPs, and retain the international cutaneous solution exactly.',
-    source: 'PR #6 REVIEW_OPUS.md finding 3; UK SNOMED 20260923 dm+d hierarchy' },
+    source: 'UK dm+d VMP 41739411000001106 (Erythromycin 2% solution) and AMP descendants; SNOMED 332346003; XML exception 540241000033110 (Erythromycin Topical solution)' },
+  ...[
+    { emisCode: '577641000033113', emisDisplay: 'Fluticasone Propionate Aqueous nasal spray 0.05 % (150 dose spray)' },
+    { emisCode: '4164541000033114', emisDisplay: 'Fluticasone Propionate Aqueous nasal spray 50 micrograms/dose, 60 doses' },
+  ].map(xml => ({ version: 3, ...xml, mode: 'dmd_family' as const,
+    targets: [{ code: '39110511000001107', display: 'Fluticasone propionate 50micrograms/dose nasal spray' }],
+    reason: 'The XML excludes generic fluticasone nasal spray. The legacy substance or pack target misses the nasal VMP and its AMPs; exclude that formulation family and retain inhaled products.',
+    source: `UK dm+d VMP 39110511000001107 (Fluticasone propionate 50micrograms/dose nasal spray) and AMP descendants; XML exception ${xml.emisCode} (${xml.emisDisplay})` })),
+  ...[
+    { emisCode: '4158741000033117', emisDisplay: 'Beclometasone Aqueous nasal spray 50 micrograms/dose, 180 doses' },
+    { emisCode: '133641000033110', emisDisplay: 'Beclomethasone Dipropionate Aqueous nasal spray 50 micrograms/dose' },
+    { emisCode: '133741000033118', emisDisplay: 'Beclomethasone Dipropionate Nasal spray 50 micrograms/dose' },
+  ].map(xml => ({ version: 3, ...xml, mode: 'dmd_family' as const,
+    targets: [{ code: '39111911000001107', display: 'Beclometasone 50micrograms/dose nasal spray' }],
+    reason: 'The XML excludes generic beclometasone nasal spray. The legacy international target misses the nasal VMP and its AMPs; exclude that formulation family and retain inhaled products.',
+    source: `UK dm+d VMP 39111911000001107 (Beclometasone 50micrograms/dose nasal spray) and AMP descendants; XML exception ${xml.emisCode} (${xml.emisDisplay})` })),
 ];

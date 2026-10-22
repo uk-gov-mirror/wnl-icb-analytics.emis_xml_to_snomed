@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { resolveExceptions, exceptionError, exceptionExclusions, preparationKey } from './exception-resolver';
 import { expandValueSetClientSide } from './client-valueset-expander';
 import { generateExpansionKey } from './valueset-utils';
@@ -168,8 +169,8 @@ test('VMP and AMP sharing a name remain ambiguous, and inactive matching retains
   assert.equal(ambiguous[0].status, 'legacy_exact');
   const retained = await resolveExceptions([item], {}, {}, none, async () => [a], { '100000': b.code },
     { codeSystem: 'SCT_CONST', classifyTarget: async () => 'preparation' });
-  assert.deepEqual(exceptionExclusions(retained).descendantCodes, [a.code, b.code]);
-  assert.match(retained[0].reason, /retain working active/);
+  assert.deepEqual(exceptionExclusions(retained), { descendantCodes: [a.code], exactCodes: [b.code] });
+  assert.match(retained[0].reason, /retain loaded product exactly/);
 });
 
 test('reviewed overrides precede wrong ConceptMap and loaded targets, with explicit scope and version', async () => {
@@ -238,9 +239,73 @@ test('a target with no current ancestry falls back exactly without a broad name 
 });
 
 
-test('an inactive exact target and a retained active family keep independent scopes', async () => {
+test('an inactive exact target cannot widen a retained loaded VMP to its AMPs', async () => {
   const result = await resolveExceptions([{ code: '100000', displayName: 'Synthetic 5mg tablet' }], {}, {}, none,
     async () => [concept('100001', 'Synthetic 5mg tablet')], { '100000': '100002' },
     { codeSystem: 'SCT_PREP', classifyTarget: async code => code === '100002' ? 'preparation' : 'unknown' });
-  assert.deepEqual(exceptionExclusions(result), { descendantCodes: ['100002'], exactCodes: ['100001'] });
+  assert.deepEqual(exceptionExclusions(result), { descendantCodes: [], exactCodes: ['100001', '100002'] });
+});
+
+test('each nasal override removes its complete dm+d family and retains inhaled corticosteroids', async () => {
+  // UK SNOMED/dm+d closures retrieved on 22 October 2026, not inferred from names.
+  const families = ['fluticasone', 'beclometasone'].map(name => JSON.parse(readFileSync(
+    new URL(`./fixtures/${name}-nasal-family.json`, import.meta.url), 'utf8')));
+  const nasal = families.flatMap(f => f.concepts.map((c: { code: string; display: string }) => concept(c.code, c.display)));
+  for (const family of families) assert.equal(family.concepts.length, family.total);
+  const inhaled = [concept('42292311000001106', 'Beclometasone 100micrograms/dose inhaler'),
+    concept('39111211000001103', 'Fluticasone 125micrograms/dose inhaler CFC free'),
+    concept('39691211000001100', 'Fluticasone propionate 100micrograms/dose dry powder inhaler (Imported)')];
+  const nativeFetch = globalThis.fetch;
+  try {
+    const overrides = EXCEPTION_OVERRIDES.filter(o => o.version === 3);
+    assert.equal(overrides.length, 5);
+    for (const override of overrides) {
+      const exceptions = [{ code: override.emisCode, displayName: override.emisDisplay }];
+      const resolutions = await resolveExceptions(exceptions, {}, {}, async () => nasal, none,
+        { [override.emisCode]: '396064000' }, { codeSystem: 'SCT_CONST', classifyTarget: async () => 'preparation' });
+      const family = families.find(f => f.concepts.some((c: { code: string }) => c.code === override.targets[0].code))!;
+      globalThis.fetch = async (input, init) => {
+        if (input === '/api/terminology/resolve-exceptions') return Response.json({ success: true, resolutions });
+        if (input === '/api/terminology/rf2-refset') return Response.json({ success: true,
+          refsets: { '100000': { members: [...nasal, ...inhaled] } } });
+        const { ecl } = JSON.parse(init!.body as string);
+        assert.equal(ecl, `<< ${override.targets[0].code}`);
+        return Response.json({ success: true, total: family.total, concepts: family.concepts });
+      };
+      const result = await expandValueSetClientSide({ id: 'ics', codeSystem: 'SNOMED_CONCEPT',
+        values: [{ code: '100000', displayName: 'Synthetic corticosteroid refset', includeChildren: true, isRefset: true }], exceptions }, {}, {});
+      const remaining = new Set(result.concepts.map(c => c.code));
+      assert.equal(result.expansionError, undefined);
+      assert.ok(family.concepts.every((c: { code: string }) => !remaining.has(c.code)), override.emisCode);
+      assert.ok(inhaled.every(c => remaining.has(c.code)), override.emisCode);
+    }
+  } finally { globalThis.fetch = nativeFetch; }
+});
+
+test('mismatch review checks applied legacy, override and additional targets beside current translations', () => {
+  const items = [
+    { code: '100000', displayName: 'Budesonide 5mg tablet' },
+    { code: '100001', displayName: 'Beclometasone 5mg tablet' },
+    { code: '540241000033110', displayName: 'Erythromycin Topical solution' },
+  ];
+  const queue = exceptionTranslationMismatches(items, {
+    '100000': { code: '200000', display: 'Budesonide 5mg tablet' },
+    '100001': { code: '200001', display: 'Nitrazepam 5mg tablet' },
+    '540241000033110': { code: '200002', display: 'Wrongingredient solution' },
+  }, [
+    { originalCode: '100000', code: '300000', display: 'Paracetamol 5mg tablet', includeDescendants: false, valuesetId: 'a' },
+    { originalCode: '100000', code: '300001', display: 'Wrongingredient 5mg tablet', includeDescendants: true, valuesetId: 'a' },
+    { originalCode: '100001', code: null, includeDescendants: false, valuesetId: 'b' },
+    { originalCode: '540241000033110', code: '41739411000001106', display: 'Erythromycin 2% solution', includeDescendants: true },
+  ]);
+  assert.equal(queue.length, 4);
+  assert.deepEqual(queue.slice(0, 2).map(r => [r.translation_mismatch, r.applied_mismatch]), [[false, true], [false, true]]);
+  assert.equal(queue[0].applied_target, '300000');
+  assert.equal(queue[1].applied_scope, 'descendants');
+  assert.deepEqual(queue[0].valueset_ids, ['a']);
+  assert.equal(queue[2].applied_target, null);
+  assert.equal(queue[2].applied_mismatch, false);
+  assert.equal(queue[3].applied_target, '41739411000001106');
+  assert.equal(queue[3].applied_mismatch, false);
+  assert.equal(queue[3].overrideVersion, 2);
 });

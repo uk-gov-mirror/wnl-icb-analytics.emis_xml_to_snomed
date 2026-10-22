@@ -107,8 +107,9 @@ export async function resolveExceptions(
         const keepLoaded = loaded && loaded !== inactive[0].code && options.classifyTarget
           && await options.classifyTarget(loaded) === 'preparation';
         const verifiedFamily = !!options.classifyTarget && await options.classifyTarget(inactive[0].code) === 'preparation';
-        results.push({ additionalDescendantCodes: keepLoaded ? [loaded] : [], originalCode: code, code: inactive[0].code, display: inactive[0].display, error: null,
-        status: 'inactive_exact', includeDescendants: verifiedFamily, reason: `One exact inactive dm+d preparation match; no historical substitution${verifiedFamily ? '' : '; no verified VMP/AMP ancestry, exact-only'}${keepLoaded ? '; retain working active loaded product too' : ''}` });
+        // A loaded VMP must not widen June's exact exclusion to all its AMPs.
+        results.push({ additionalExactCodes: keepLoaded ? [loaded] : [], originalCode: code, code: inactive[0].code, display: inactive[0].display, error: null,
+        status: 'inactive_exact', includeDescendants: verifiedFamily, reason: `One exact inactive dm+d preparation match; no historical substitution${verifiedFamily ? '' : '; no verified VMP/AMP ancestry, exact-only'}${keepLoaded ? '; retain loaded product exactly without widening to its AMPs' : ''}` });
         continue;
       }
       results.push(legacyExact(`${exact.length} exact active VMP/AMP matches; ${inactive.length} exact inactive dm+d matches; review preparation`));
