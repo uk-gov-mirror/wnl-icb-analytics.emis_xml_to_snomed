@@ -4,6 +4,7 @@ import { EXCEPTION_OVERRIDES } from './exception-overrides';
 export interface ExceptionResolution {
   additionalCodes?: string[];
   additionalDescendantCodes?: string[];
+  additionalExactCodes?: string[];
   overrideVersion?: number;
   originalCode: string;
   code: string | null;
@@ -62,8 +63,15 @@ export async function resolveExceptions(
           throw new Error(`Override ${code} target ${target.code} is not an active dm+d VMP/AMP`);
         }
       }
+      for (const target of override.exactTargets || []) {
+        const found = options.findExactTarget ? await options.findExactTarget(target.code) : [];
+        if (!found.some(c => c.code === target.code && preparationKey(c.display) === preparationKey(target.display))) {
+          throw new Error(`Override ${code} exact target ${target.code} failed terminology validation`);
+        }
+      }
       results.push({ originalCode: code, code: override.targets[0].code,
-        additionalCodes: override.targets.slice(1).map(t => t.code), display: override.targets.map(t => t.display).join('; '),
+        additionalCodes: override.targets.slice(1).map(t => t.code),
+        additionalExactCodes: override.exactTargets?.map(t => t.code), display: override.targets.map(t => t.display).join('; '),
         error: null, status: override.mode === 'inactive_exact' ? 'inactive_exact' : 'resolved_family',
         includeDescendants: override.mode === 'dmd_family', overrideVersion: override.version,
         reason: `Exception override v${override.version} (${override.mode}): ${override.reason}` });
@@ -121,7 +129,10 @@ export function exceptionExclusions(resolutions: ExceptionResolution[]) {
       ...(r.code && r.includeDescendants ? [r.code, ...(r.additionalCodes || [])] : []),
       ...(r.additionalDescendantCodes || []),
     ]),
-    exactCodes: resolutions.flatMap(r => r.code && !r.includeDescendants ? [r.code, ...(r.additionalCodes || [])] : []),
+    exactCodes: resolutions.flatMap(r => [
+      ...(r.code && !r.includeDescendants ? [r.code, ...(r.additionalCodes || [])] : []),
+      ...(r.additionalExactCodes || []),
+    ]),
   };
 }
 

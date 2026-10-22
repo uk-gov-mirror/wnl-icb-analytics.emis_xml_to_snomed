@@ -181,7 +181,9 @@ PR #6 round 2. They run before matching and fallback, validate targets against t
 terminology server and record their version and reason on every affected audit
 row. Prednesol retains its inactive named brand exactly, rather than substituting
 all generic soluble tablets. Loderm and topical erythromycin use the UK 2%
-solution VMP. Caduet uses a specific international clinical drug exactly because
+solution VMP. The erythromycin override also retains the original international
+cutaneous-solution code exactly, so that code cannot re-enter ordinary ECL sets.
+Caduet uses a specific international clinical drug exactly because
 no UK dm+d preparation was found. These corrections do not change the inclusion
 ConceptMap or its recorded equivalence. The list contains the clinical sources;
 targets and membership differences still need publication review.
@@ -195,7 +197,8 @@ that share an ingredient token still require manual review.
 `exception_resolution_audit.json` records every occurrence's targets, status,
 `includeDescendants`, override version and reason. `additionalCodes` records another explicit override target with the same scope.
 `additionalDescendantCodes` records a retained active loaded VMP/AMP family,
-independently of an inactive primary target's exact-only scope. Status is
+independently of an inactive primary target's exact-only scope.
+`additionalExactCodes` records exact exclusions alongside a primary family. Status is
 `resolved_family` for active preparations, mapped clinical exceptions and reviewed
 active overrides, `inactive_exact` for inactive matches, or `legacy_exact` for
 fallback. Read scope from `includeDescendants`, not status. These audit fields do

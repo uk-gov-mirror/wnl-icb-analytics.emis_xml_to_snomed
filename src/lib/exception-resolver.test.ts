@@ -174,13 +174,13 @@ test('VMP and AMP sharing a name remain ambiguous, and inactive matching retains
 
 test('reviewed overrides precede wrong ConceptMap and loaded targets, with explicit scope and version', async () => {
   for (const override of EXCEPTION_OVERRIDES) {
-    const candidates = override.targets.map(t => concept(t.code, t.display));
+    const candidates = [...override.targets, ...(override.exactTargets || [])].map(t => concept(t.code, t.display));
     const result = await resolveExceptions([{ code: override.emisCode, displayName: override.emisDisplay }],
       { [override.emisCode]: { code: '999999', display: 'Known wrong ingredient' } }, {},
       async () => candidates, async () => candidates, { [override.emisCode]: '999999' },
       { codeSystem: 'SCT_CONST', classifyTarget: async () => 'preparation', findExactTarget: async () => candidates });
     assert.equal(result[0].code, override.targets[0].code);
-    assert.equal(result[0].overrideVersion, 1);
+    assert.equal(result[0].overrideVersion, override.version);
     assert.equal(result[0].includeDescendants, override.mode === 'dmd_family');
     assert.match(result[0].reason, /Exception override/);
     await assert.rejects(resolveExceptions([{ code: override.emisCode, displayName: override.emisDisplay }], {}, {}, none, none), /failed terminology validation/);
@@ -192,13 +192,14 @@ test('topical erythromycin override removes its VMP and AMP from a COPD antibiot
   const topical = concept('41739411000001106', 'Erythromycin 2% solution');
   const amp = concept('100002', 'Synthetic topical AMP');
   const oral = concept('100003', 'Synthetic oral antibiotic');
+  const international = concept('332346003', 'Erythromycin 20 mg/mL cutaneous solution');
   const resolutions = await resolveExceptions([{ code: override.emisCode, displayName: override.emisDisplay }], {}, {}, async () => [topical], none,
-    undefined, { codeSystem: 'SCT_CONST', classifyTarget: async () => 'preparation' });
+    undefined, { codeSystem: 'SCT_CONST', classifyTarget: async () => 'preparation', findExactTarget: async () => [international] });
   const nativeFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     if (input === '/api/terminology/resolve-exceptions') return Response.json({ success: true, resolutions });
     const { ecl } = JSON.parse(init!.body as string);
-    const concepts = ecl === '<< 41739411000001106' ? [topical, amp] : [topical, amp, oral];
+    const concepts = ecl === '<< 41739411000001106' ? [topical, amp] : [topical, amp, international, oral];
     return Response.json({ success: true, total: concepts.length, concepts });
   };
   try {
