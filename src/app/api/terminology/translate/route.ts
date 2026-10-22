@@ -17,7 +17,8 @@ export async function POST(request: NextRequest) {
     const uniqueCodes = [...new Set(codes)];
     console.log(`Batch translating ${uniqueCodes.length} unique EMIS codes (filter: ${equivalenceFilter})...`);
 
-    const translations = await batchTranslateEmisCodes(uniqueCodes, equivalenceFilter);
+    const equivalences: Record<string, string> = {};
+    const translations = await batchTranslateEmisCodes(uniqueCodes, equivalenceFilter, equivalences);
 
     const successCount = Object.values(translations).filter(t => t !== null).length;
     console.log(`Translation complete: ${successCount}/${uniqueCodes.length} successful`);
@@ -25,6 +26,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json<TranslateCodesResponse>({
       success: true,
       translations,
+      equivalences,
     });
   } catch (error) {
     console.error('Translation error:', error);

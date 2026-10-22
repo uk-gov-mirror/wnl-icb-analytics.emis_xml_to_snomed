@@ -113,6 +113,35 @@ npm run start
 
 ## Development Notes
 
+### Local extraction
+
+With the terminology OAuth environment variables set, run:
+
+```powershell
+npx tsx scripts/extract-xml.ts "path/to/searches.xml" "path/to/output" strict
+```
+
+This writes six normalised CSVs, a manifest, the per-code translation metadata
+and a local terminology-response cache. It does not upload or load data.
+`original_codes.csv` appends `translation_equivalence` without changing the
+existing columns. The primary CodeID map relationship survives rejection by
+the expansion filter. A DrugCodeID relationship supplies the value only when
+the primary map has no match. `unmapped` means neither map returned a match.
+
+Named preparation exceptions require one exact active VMP/AMP match, including
+ingredient, strength, form and brand. Spacing and the position of the dosage
+form may differ. The resolver does not infer dose conversions, substitute an
+ingredient family or use a historical replacement without preparation evidence.
+Unresolved exceptions quarantine the whole value set: its metadata and reasons
+remain in the export, with no partial expanded-concept rows. Review every
+`expansion_error` before publication. Quarantined files cannot replace a complete
+published catalogue.
+
+Expansion reuse includes each instance's code system, child/refset flags and
+exception codes and names. The original code-only hash remains in the export.
+Complete exception descendants are removed after combining RF2, ordinary ECL
+and recursive SCT_CONST product results.
+
 - Server Components used for API integration (OAuth, parsing)
 - Client Components for interactive features (drag-drop, checkboxes)
 - Custom events used for XML parsing → hierarchy display communication

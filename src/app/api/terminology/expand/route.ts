@@ -1,3 +1,5 @@
+import { resolveExceptions, exceptionError } from '@/lib/exception-resolver';
+import { buildExceptionsMetadata } from '@/lib/batch-assembly';
 import { expandSctConstProducts } from '@/lib/sct-const-expander';
 import { NextRequest, NextResponse } from 'next/server';
 import {
@@ -10,6 +12,7 @@ import {
 import { buildBatchedEclQuery, buildBatchedEclQueryWithoutRefsets, separateRefsets, buildFormattedEclExpression } from '@/lib/ecl-builder';
 import {
   expandEclQuery,
+  findPreparationCandidates,
   translateEmisCodesToSnomed,
   resolveHistoricalConcepts
 } from '@/lib/terminology-client';
@@ -48,7 +51,8 @@ async function expandSingleValueSet(
   historicalMap: Map<string, string>,
   featureId: string,
   featureName: string,
-  allConceptsMap: Map<string, any>
+  allConceptsMap: Map<string, any>,
+  equivalences: Record<string, string>
 ): Promise<ValueSetGroup> {
   const vsOriginalParentCodes = mapping.codeIndices.map((idx: number) => parentCodes[idx]);
   const vsOriginalExcludedCodes = mapping.excludedCodes || [];
@@ -59,33 +63,13 @@ async function expandSingleValueSet(
     console.log(`[expandSingleValueSet] ValueSet ${mapping.valueSetIndex + 1} has ${vsOriginalExcludedCodes.length} excluded codes:`, vsOriginalExcludedCodes.slice(0, 5));
   }
   
-  // Translate and resolve excluded codes (same process as parent codes)
-  // CRITICAL: Only include excluded codes that were successfully translated
-  const vsExcludedCodes = vsOriginalExcludedCodes
-    .filter((code: string) => {
-      const translatedCode = codeToSnomedMap.get(code);
-      const hasTranslation = !!translatedCode;
-
-      if (!hasTranslation) {
-        console.log(`[expandSingleValueSet] Filtering out unmapped excluded code: ${code} (no ConceptMap translation)`);
-      }
-
-      return hasTranslation;
-    })
-    .map((code: string) => {
-      const translatedCode = codeToSnomedMap.get(code);
-      const snomedCode = translatedCode!.code; // Safe to use ! because we filtered above
-      return historicalMap.get(snomedCode) || snomedCode;
-    });
-
-  // Debug: log translated/resolved excluded codes
-  if (vsOriginalExcludedCodes.length > 0) {
-    console.log(`[expandSingleValueSet] ValueSet ${mapping.valueSetIndex + 1}: ${vsExcludedCodes.length}/${vsOriginalExcludedCodes.length} excluded codes successfully translated`);
-  }
-  if (vsExcludedCodes.length > 0) {
-    console.log(`[expandSingleValueSet] Translated excluded codes:`, vsExcludedCodes.slice(0, 5));
-  }
-
+  const resolutions = await resolveExceptions(
+    vsOriginalExcludedCodes.map((code: string, idx: number) => ({ code, displayName: vsOriginalExcludedDisplayNames[idx] })),
+    Object.fromEntries(codeToSnomedMap), Object.fromEntries(historicalMap), findPreparationCandidates,
+  );
+  const resolutionError = exceptionError(resolutions);
+  if (resolutionError) throw new Error(resolutionError);
+  const vsExcludedCodes = resolutions.flatMap(r => r.code ? [r.code] : []);
   const vsExcludedSet = new Set(vsExcludedCodes);
 
   // Build values array for this specific ValueSet
@@ -348,6 +332,10 @@ async function expandSingleValueSet(
     }
   });
 
+  for (let i = 0; i < vsExcludedCodes.length; i += 50) {
+    const excluded = await expandEclQuery(vsExcludedCodes.slice(i, i + 50).map(c => `<< ${c}`).join(' OR '));
+    excluded.forEach(c => vsExcludedSet.add(c.code));
+  }
   // Filter out excluded codes
   const filteredConcepts = vsConcepts.filter(
     (c) => !vsExcludedSet.has(c.code)
@@ -380,6 +368,7 @@ async function expandSingleValueSet(
       isRefset: isRefset?.[idx] || false,
       translatedTo: translatedCode ? currentCode : undefined,
       translatedToDisplay: translatedCode?.display,
+      translationEquivalence: equivalences[originalCode] || translatedCode?.equivalence || 'unmapped',
     };
   });
 
@@ -567,50 +556,8 @@ async function expandSingleValueSet(
   // Build exceptions metadata with translation information and error tracking.
   // The raw XML code and displayName are always preserved; translationError records
   // the reason translation failed without dropping the original code.
-  const exceptionsMetadata = vsOriginalExcludedCodes.map((originalCode: string, idx: number) => {
-    const originalDisplay = vsOriginalExcludedDisplayNames[idx] || '';
-    const translatedCode = codeToSnomedMap.get(originalCode);
-    const hasTranslation = !!translatedCode;
-
-    let translatedSnomedCode: string | undefined;
-    let translationError: string | undefined;
-    let includedInEcl = false;
-
-    if (hasTranslation) {
-      // Successfully translated via ConceptMap
-      const snomedCode = translatedCode!.code;
-      translatedSnomedCode = historicalMap.get(snomedCode) || snomedCode;
-
-      // Check if this code is valid SNOMED format (6-18 digits, numeric)
-      const isValidSnomed = /^\d+$/.test(translatedSnomedCode!) &&
-                           translatedSnomedCode!.length >= 6 &&
-                           translatedSnomedCode!.length <= 18;
-
-      if (!isValidSnomed) {
-        translationError = `Invalid SNOMED code format: ${translatedSnomedCode}`;
-        includedInEcl = false;
-      } else if (vsExcludedCodes.includes(translatedSnomedCode)) {
-        // Successfully translated, validated, and included in ECL MINUS clause
-        includedInEcl = true;
-      } else {
-        // Translated but not included (filtered out for some reason)
-        translationError = 'Filtered out after translation';
-        includedInEcl = false;
-      }
-    } else {
-      // No ConceptMap translation found
-      translationError = 'No translation found from ConceptMap';
-      includedInEcl = false;
-    }
-
-    return {
-      originalExcludedCode: originalCode,
-      originalExcludedDisplay: originalDisplay,
-      translatedToSnomedCode: translatedSnomedCode || null,
-      includedInEcl,
-      translationError: translationError || null,
-    };
-  });
+  const exceptionsMetadata = buildExceptionsMetadata(vsOriginalExcludedCodes,
+    vsOriginalExcludedDisplayNames, Object.fromEntries(codeToSnomedMap), Object.fromEntries(historicalMap), resolutions);
 
   return {
     valueSetId,
@@ -656,7 +603,10 @@ export async function POST(request: NextRequest) {
 
     // Compute translations and historical resolution
     console.log(`Attempting ConceptMap translation for all ${parentCodes.length} codes (equivalence filter: ${equivalenceFilter})...`);
-    const codeToSnomedMap: Map<string, any> = await translateEmisCodesToSnomed(parentCodes, equivalenceFilter);
+    const equivalences: Record<string, string> = {};
+    const translationCodes = [...new Set([...parentCodes, ...(excludedCodes || []),
+      ...(valueSetMapping || []).flatMap(m => m.excludedCodes || [])])];
+    const codeToSnomedMap: Map<string, any> = await translateEmisCodesToSnomed(translationCodes, equivalenceFilter, equivalences);
     console.log(`ConceptMap results: ${codeToSnomedMap.size} codes translated, ${parentCodes.length - codeToSnomedMap.size} not found in ConceptMap`);
 
     // Log first few translated mappings
@@ -737,16 +687,19 @@ export async function POST(request: NextRequest) {
         const vsOriginalParentCodes = mapping.codeIndices.map((idx: number) => parentCodes[idx]);
         const xmlCodes = [...vsOriginalParentCodes].sort();
         const hash = generateValueSetHash(xmlCodes);
-        return { mapping, hash, originalCodes: vsOriginalParentCodes };
+        const expansionKey = JSON.stringify({ codes: mapping.codeIndices.map((idx: number) =>
+          [parentCodes[idx], includeChildren[idx], isRefset?.[idx], codeSystems?.[idx]]),
+          exceptions: mapping.excludedCodes, displays: mapping.excludedDisplayNames });
+        return { mapping, hash, expansionKey, originalCodes: vsOriginalParentCodes };
       });
 
       // Step 2: Group by hash
       const hashGroups = new Map<string, typeof mappingWithHash>();
       for (const item of mappingWithHash) {
-        if (!hashGroups.has(item.hash)) {
-          hashGroups.set(item.hash, []);
+        if (!hashGroups.has(item.expansionKey)) {
+          hashGroups.set(item.expansionKey, []);
         }
-        hashGroups.get(item.hash)!.push(item);
+        hashGroups.get(item.expansionKey)!.push(item);
       }
 
       console.log(`Optimization: ${valueSetMapping.length} ValueSets grouped into ${hashGroups.size} unique code sets`);
@@ -772,7 +725,8 @@ export async function POST(request: NextRequest) {
           historicalMap,
           featureId,
           featureName,
-          allConceptsMap
+          allConceptsMap,
+          equivalences
         );
 
         expandedByHash.set(hash, valueSetGroup);
@@ -784,9 +738,9 @@ export async function POST(request: NextRequest) {
 
       // Step 4: Propagate results to all ValueSets with the same hash
       for (const item of mappingWithHash) {
-        const templateGroup = expandedByHash.get(item.hash)!;
+        const templateGroup = expandedByHash.get(item.expansionKey)!;
         
-        if (item === mappingWithHash.find(m => m.hash === item.hash)) {
+        if (item === mappingWithHash.find(m => m.expansionKey === item.expansionKey)) {
           // This is the first (already expanded) ValueSet for this hash
           valueSetGroups.push(templateGroup);
         } else {

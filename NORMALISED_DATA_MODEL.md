@@ -56,6 +56,7 @@ Stores original codes from the XML file.
 | is_refset | BOOLEAN | Whether this is a refset ID | |
 | translated_to_snomed_code | VARCHAR | SNOMED code after ConceptMap translation | NULLABLE |
 | translated_to_display | VARCHAR | Display name of translated SNOMED code | NULLABLE |
+| translation_equivalence | VARCHAR | Per-code relationship returned by the primary EMIS CodeID ConceptMap, including equivalent, wider, narrower and inexact. `unmapped` means no map match. Retained when the expansion filter rejects the target. Separate from XML include_children. | |
 
 ### 4. expanded_concepts
 Stores concepts returned by the terminology server.

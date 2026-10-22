@@ -9,6 +9,7 @@ import { formatForSql } from './sql-formatter';
 import { prepareValueSetForExpansion } from './valueset-expansion';
 import { buildFormattedEclExpression } from './ecl-builder';
 import { generateValueSetFriendlyName, generateValueSetId } from './valueset-utils';
+import { ExceptionResolution, namesPreparation } from './exception-resolver';
 
 export interface OriginalCodeMetadata {
   originalCode: string;
@@ -18,6 +19,7 @@ export interface OriginalCodeMetadata {
   isRefset: boolean;
   translatedTo?: string;
   translatedToDisplay?: string;
+  translationEquivalence?: string;
 }
 
 export interface FailedCode {
@@ -45,6 +47,7 @@ export function buildOriginalCodesMetadata(
   isRefset: boolean[] | undefined,
   translationMap: Record<string, TranslatedCode | null>,
   historicalMap: Record<string, string>,
+  equivalences: Record<string, string> = {},
 ): OriginalCodeMetadata[] {
   return codeIndices.map((idx: number) => {
     const originalCode = parentCodes[idx];
@@ -60,6 +63,7 @@ export function buildOriginalCodesMetadata(
       isRefset: isRefset?.[idx] || false,
       translatedTo: translatedCode ? currentCode : undefined,
       translatedToDisplay: translatedCode?.display,
+      translationEquivalence: equivalences[originalCode] || translatedCode?.equivalence || 'unmapped',
     };
   });
 }
@@ -130,10 +134,19 @@ export function buildExceptionsMetadata(
   excludedDisplayNames: string[] | undefined,
   translationMap: Record<string, TranslatedCode | null>,
   historicalMap: Record<string, string>,
+  resolutions?: ExceptionResolution[],
 ): ExceptionMetadata[] {
   return excludedCodes.map((originalCode, idx) => {
     const originalDisplay = excludedDisplayNames?.[idx] || '';
     const translatedCode = translationMap[originalCode];
+    const resolution = resolutions?.find(r => r.originalCode === originalCode);
+    if (resolution || namesPreparation(originalDisplay)) return {
+      originalExcludedCode: originalCode,
+      originalExcludedDisplay: originalDisplay,
+      translatedToSnomedCode: resolution?.code || null,
+      includedInEcl: !!resolution?.code && !resolution.error,
+      translationError: resolution?.error || (resolution?.code ? null : 'Preparation exception requires reconciliation'),
+    };
 
     if (!translatedCode) {
       return {
@@ -164,6 +177,7 @@ export interface ExtractionInstance {
   vsIndex: number;
   vs: EmisValueSet;
   hash: string;
+  expansionKey?: string;
 }
 
 export interface NormalizedTables {
@@ -189,6 +203,7 @@ export function buildNormalizedTables(
   translations: Record<string, TranslatedCode | null>,
   historical: Record<string, string>,
   equivalenceFilter: EquivalenceFilter,
+  equivalences: Record<string, string> = {},
 ): NormalizedTables {
   const tables: NormalizedTables = {
     reports: [],
@@ -221,6 +236,9 @@ export function buildNormalizedTables(
     const codeIndices = prepared.parentCodes.map((_: string, idx: number) => idx);
     const valueSetId = generateValueSetId(instance.report.id, instance.hash, instance.vsIndex);
     const friendlyName = generateValueSetFriendlyName(instance.report.name, instance.vsIndex);
+    const key = instance.expansionKey || instance.hash;
+    const failureMessage = failedByHash.get(key);
+    const raw = expandedByHash.get(key);
 
     // ECL from resolved SNOMED codes — computable even when expansion failed
     const eclValues = prepared.parentCodes.map((code: string, idx: number) => {
@@ -234,16 +252,11 @@ export function buildNormalizedTables(
         isRefset: prepared.isRefset[idx],
       };
     });
-    const resolvedExcludedCodes = prepared.excludedCodes
-      .filter((code: string) => !!translations[code])
-      .map((code: string) => {
-        const translated = translations[code]!;
-        return historical[translated.code] || translated.code;
-      });
+    const resolvedExcludedCodes = buildExceptionsMetadata(prepared.excludedCodes,
+      prepared.excludedDisplayNames, translations, historical, raw?.exceptionResolutions)
+      .flatMap(e => e.includedInEcl && e.translatedToSnomedCode ? [e.translatedToSnomedCode] : []);
     const eclExpression = buildFormattedEclExpression(eclValues, resolvedExcludedCodes);
 
-    const failureMessage = failedByHash.get(instance.hash);
-    const raw = expandedByHash.get(instance.hash);
 
     const pushOriginalCodes = (originalCodes: OriginalCodeMetadata[]) => {
       originalCodes.forEach((oc, idx) => {
@@ -257,6 +270,7 @@ export function buildNormalizedTables(
           is_refset: oc.isRefset || false,
           translated_to_snomed_code: oc.translatedTo || '',
           translated_to_display: oc.translatedToDisplay || '',
+          translation_equivalence: oc.translationEquivalence || 'unmapped',
         });
       });
     };
@@ -280,6 +294,7 @@ export function buildNormalizedTables(
       const originalCodes = buildOriginalCodesMetadata(
         prepared.parentCodes, codeIndices, prepared.displayNames, prepared.codeSystems,
         prepared.includeChildren, prepared.isRefset, translations, historical,
+        equivalences,
       );
       const exceptions = buildExceptionsMetadata(
         prepared.excludedCodes, prepared.excludedDisplayNames, translations, historical,
@@ -313,6 +328,7 @@ export function buildNormalizedTables(
       prepared.isRefset,
       translations,
       historical,
+      equivalences,
     );
 
     tables.valuesets.push({
@@ -372,18 +388,20 @@ export function assembleValueSetData(
   isRefset: boolean[] | undefined,
   translationMap: Record<string, TranslatedCode | null>,
   historicalMap: Record<string, string>,
+  equivalences: Record<string, string> = {},
 ) {
   const originalCodes = buildOriginalCodesMetadata(
     parentCodes, codeIndices, displayNames, codeSystems,
     includeChildren, isRefset, translationMap, historicalMap,
+    equivalences,
   );
 
-  const failedCodes = detectFailedCodes(
+  const failedCodes = raw.expansionError ? [] : detectFailedCodes(
     originalCodes, raw.concepts, raw.successfulSctConstCodes,
     raw.rf2RefsetIds, raw.sctConstNoProducts,
   );
 
-  const exceptions = buildExceptionsMetadata(excludedCodes, excludedDisplayNames, translationMap, historicalMap);
+  const exceptions = buildExceptionsMetadata(excludedCodes, excludedDisplayNames, translationMap, historicalMap, raw.exceptionResolutions);
 
   const sqlFormattedCodes = formatForSql(raw.concepts.map(c => c.code));
 
@@ -404,6 +422,6 @@ export function assembleValueSetData(
     originalCodes,
     failedCodes: failedCodes.length > 0 ? failedCodes : undefined,
     exceptions: exceptions.length > 0 ? exceptions : undefined,
-    expansionError,
+    expansionError: raw.expansionError || expansionError,
   };
 }

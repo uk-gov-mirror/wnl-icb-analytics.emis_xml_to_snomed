@@ -1,4 +1,16 @@
 import crypto from 'crypto';
+import { EmisValueSet } from './types';
+
+/** Expansion identity includes flags and exceptions; exported code hashes stay stable. */
+export function generateExpansionKey(vs: EmisValueSet): string {
+  return JSON.stringify({
+    system: vs.codeSystem,
+    values: vs.values.map(v => [v.code, !!v.includeChildren, !!v.isRefset]).sort(),
+    exceptions: vs.exceptions.map(e => [e.code, e.displayName || '']).sort(),
+    allValuesExcept: !!vs.isAllValuesExcept,
+    restrictionTest: !!vs.isRestrictionTest,
+  });
+}
 
 /**
  * Keyword mapping for shortening valueset names

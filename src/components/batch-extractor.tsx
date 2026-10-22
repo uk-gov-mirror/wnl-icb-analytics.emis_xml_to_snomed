@@ -14,7 +14,7 @@ import { ExtractionFileList } from '@/components/extraction-file-list';
 import { ExtractionDataModel } from '@/components/extraction-data-model';
 import { buildNormalizedTables, ExtractionInstance, NormalizedTables } from '@/lib/batch-assembly';
 import { TranslatedCode, RawValueSetExpansion } from '@/lib/types';
-import { generateValueSetHash, slugifyFileName } from '@/lib/valueset-utils';
+import { generateValueSetHash, generateExpansionKey, slugifyFileName } from '@/lib/valueset-utils';
 import { buildImplementationGuideMarkdown } from '@/lib/agent-report-utils';
 import { formatTime, formatTimeNatural } from '@/lib/time-utils';
 import { convertToCSV } from '@/lib/csv-utils';
@@ -39,6 +39,7 @@ interface ExtractionContext {
   failedByHash: Map<string, string>;
   translations: Record<string, TranslatedCode | null>;
   historical: Record<string, string>;
+  equivalences: Record<string, string>;
   selectedReports: EmisReport[];
   totalInstanceCount: number;
   totalReports: number;
@@ -245,7 +246,8 @@ export default function BatchExtractor() {
             { isCancelled: () => cancellationRef.current },
           );
           ctx.expandedByHash.set(hash, raw);
-          ctx.failedByHash.delete(hash);
+          if (raw.expansionError) ctx.failedByHash.set(hash, raw.expansionError);
+          else ctx.failedByHash.delete(hash);
         } catch (error) {
           if (error instanceof CancelledError || cancellationRef.current) return;
           const message = coerceErrorMessage(error);
@@ -295,6 +297,7 @@ export default function BatchExtractor() {
         ctx.translations,
         ctx.historical,
         equivalenceFilter,
+        ctx.equivalences,
       );
       setExtractedData(tables);
       setFailedCount(ctx.failedByHash.size);
@@ -349,22 +352,22 @@ export default function BatchExtractor() {
         let reportVsCounter = 0;
         for (const vs of report.valueSets) {
           const codes = vs.values.map((v: any) => v.code).sort();
-          const codeKey = codes.join(',');
+          const codeKey = generateExpansionKey(vs);
 
           if (reportCodeKeys.has(codeKey)) continue; // skip duplicate within report
           reportCodeKeys.add(codeKey);
 
-          allInstances.push({ report, vsIndex: reportVsCounter++, vs, hash: generateValueSetHash(codes) });
+          allInstances.push({ report, vsIndex: reportVsCounter++, vs, hash: generateValueSetHash(codes), expansionKey: codeKey });
         }
       }
 
       // Group by hash — only expand unique hashes
       const hashGroups = new Map<string, ExtractionInstance[]>();
       for (const instance of allInstances) {
-        if (!hashGroups.has(instance.hash)) {
-          hashGroups.set(instance.hash, []);
+        if (!hashGroups.has(instance.expansionKey!)) {
+          hashGroups.set(instance.expansionKey!, []);
         }
-        hashGroups.get(instance.hash)!.push(instance);
+        hashGroups.get(instance.expansionKey!)!.push(instance);
       }
 
       const uniqueHashes = Array.from(hashGroups.keys());
@@ -392,6 +395,7 @@ export default function BatchExtractor() {
       const TRANSLATE_CHUNK_SIZE = 200;
       const allCodesArray = Array.from(allUniqueCodes);
       const globalTranslations: Record<string, TranslatedCode | null> = {};
+      const globalEquivalences: Record<string, string> = {};
       const translateChunkCount = Math.ceil(allCodesArray.length / TRANSLATE_CHUNK_SIZE);
 
       for (let i = 0; i < allCodesArray.length; i += TRANSLATE_CHUNK_SIZE) {
@@ -411,12 +415,13 @@ export default function BatchExtractor() {
           message: `Translating codes (batch ${chunkIndex}/${translateChunkCount}, ${Math.min(i + TRANSLATE_CHUNK_SIZE, allCodesArray.length)}/${allCodesArray.length})...`,
         });
 
-        const translateData = await fetchApi<{ translations?: Record<string, TranslatedCode | null> }>(
+        const translateData = await fetchApi<{ translations?: Record<string, TranslatedCode | null>; equivalences?: Record<string, string> }>(
           '/api/terminology/translate',
           { codes: chunk, equivalenceFilter },
           { isCancelled },
         );
         Object.assign(globalTranslations, translateData.translations || {});
+        Object.assign(globalEquivalences, translateData.equivalences || {});
       }
 
       const translatedCount = Object.values(globalTranslations).filter(t => t !== null).length;
@@ -488,6 +493,7 @@ export default function BatchExtractor() {
         failedByHash: new Map<string, string>(),
         translations: globalTranslations,
         historical: globalHistorical,
+        equivalences: globalEquivalences,
         selectedReports: [...selectedReports],
         totalInstanceCount,
         totalReports,
@@ -521,6 +527,7 @@ export default function BatchExtractor() {
         ctx.translations,
         ctx.historical,
         equivalenceFilter,
+        ctx.equivalences,
       );
 
       setExtractedData(tables);

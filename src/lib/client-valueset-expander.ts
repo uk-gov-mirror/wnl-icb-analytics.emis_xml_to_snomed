@@ -22,6 +22,7 @@ import {
   buildBatchedEclQuery,
 } from './ecl-builder';
 import { expandSctConstProducts } from './sct-const-expander';
+import { ExceptionResolution, exceptionError } from './exception-resolver';
 import { fetchApi, CancelledError } from './api-client';
 
 interface ValueWithMetadata {
@@ -63,11 +64,11 @@ async function expandEcl(ecl: string, options: ExpandOptions): Promise<SnomedCon
     all.push(...concepts);
     offset += concepts.length;
 
-    if (concepts.length < ECL_PAGE_SIZE) break;
-    if (typeof res.total === 'number' && all.length >= res.total) break;
+    if (typeof res.total === 'number' && all.length >= res.total) return all;
+    if (typeof res.total !== 'number' && concepts.length < ECL_PAGE_SIZE) return all;
+    if (concepts.length === 0) throw new Error('Incomplete terminology expansion: no further page returned');
   }
-
-  return all;
+  throw new Error('Incomplete terminology expansion: page limit reached');
 }
 
 /** Resolve display names for codes missing an RF2 description */
@@ -101,14 +102,16 @@ export async function expandValueSetClientSide(
   historical: Record<string, string>,
   options: ExpandOptions = {},
 ): Promise<RawValueSetExpansion> {
-  // Excluded codes: only those with a ConceptMap translation, resolved to current concepts
-  const excludedCodes = (vs.exceptions || [])
-    .map((e) => e.code)
-    .filter((code) => !!translations[code])
-    .map((code) => {
-      const snomedCode = translations[code]!.code;
-      return historical[snomedCode] || snomedCode;
-    });
+  const exceptionResolutions = vs.exceptions?.length
+    ? (await fetchApi<{ resolutions: ExceptionResolution[] }>('/api/terminology/resolve-exceptions',
+      { exceptions: vs.exceptions, translations, historical }, { isCancelled: options.isCancelled })).resolutions
+    : [];
+  const expansionError = exceptionError(exceptionResolutions);
+  if (expansionError) return {
+    concepts: [], parentCodes: [], rf2RefsetIds: [], successfulSctConstCodes: [],
+    sctConstNoProducts: {}, exceptionResolutions, expansionError,
+  };
+  const excludedCodes = exceptionResolutions.flatMap(r => r.code ? [r.code] : []);
   const excludedSet = new Set(excludedCodes);
 
   // Build values with translated/resolved codes
@@ -261,6 +264,11 @@ export async function expandValueSetClientSide(
 
   // Combine with UK Product concepts
   const combined = [...vsConcepts, ...ukProductConcepts];
+  // RF2 members bypass ECL MINUS. Apply complete exclusions after every branch.
+  for (let i = 0; i < excludedCodes.length; i += ECL_BATCH_SIZE) {
+    const excluded = await expandEcl(excludedCodes.slice(i, i + ECL_BATCH_SIZE).map(c => `<< ${c}`).join(' OR '), options);
+    excluded.forEach(c => excludedSet.add(c.code));
+  }
 
   // Mark parent codes (preserve source from RF2 or terminology server)
   const parentCodeSet = new Set(vsValues.map((v) => v.code));
@@ -283,6 +291,7 @@ export async function expandValueSetClientSide(
   });
 
   return {
+    exceptionResolutions,
     concepts: filteredConcepts,
     parentCodes: vsValues.map((v) => v.code),
     rf2RefsetIds,

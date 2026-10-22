@@ -11,6 +11,24 @@ const TERMINOLOGY_SERVER_BASE =
 const EMIS_CODE_SYSTEM = 'http://LDS.nhs/EMIS/CodeID/cs';
 const SNOMED_CODE_SYSTEM = 'http://snomed.info/sct';
 
+/** Search active VMP/AMPs. A name alone must never select an ingredient grouper. */
+export async function findPreparationCandidates(name: string): Promise<SnomedConcept[]> {
+  const token = await getAccessToken();
+  // Strength and form still take part in exact matching, not in the search filter.
+  const filter = name.match(/^[a-z][a-z-]*/i)?.[0] || name;
+  const url = new URL(`${TERMINOLOGY_SERVER_BASE}/ValueSet/$expand`);
+  url.searchParams.set('url', 'http://snomed.info/sct?fhir_vs=ecl/(<<10363801000001108 OR <<10363901000001102)');
+  url.searchParams.set('filter', filter || name);
+  url.searchParams.set('activeOnly', 'true');
+  url.searchParams.set('count', '1000');
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30000) });
+  await handleFhirResponse(response, { context: 'resolving preparation exception' });
+  const data: FhirValueSetExpansion = await response.json();
+  const candidates = data.expansion?.contains || [];
+  if ((data.expansion?.total || 0) > candidates.length) throw new Error('Preparation search is truncated; reconcile the exception');
+  return candidates.map(c => ({ ...c, source: 'terminology_server' }));
+}
+
 // Default: Only accept equivalent or narrower mappings
 const ACCEPTED_EQUIVALENCES = ['equivalent', 'narrower'];
 
@@ -48,7 +66,8 @@ async function tryConceptMapTranslation(
   emisCode: string,
   conceptMapId: string,
   token: string,
-  acceptedEquivalences: string[]
+  acceptedEquivalences: string[],
+  equivalences?: Record<string, string>
 ): Promise<TranslatedCode | null> {
   const url = `${TERMINOLOGY_SERVER_BASE}/ConceptMap/${conceptMapId}/$translate`;
 
@@ -111,6 +130,7 @@ async function tryConceptMapTranslation(
           if (matchParam?.part) {
             const equivalencePart = matchParam.part.find((p) => p.name === 'equivalence');
             const equivalence = equivalencePart?.valueCode || equivalencePart?.valueString;
+            if (equivalence && equivalences && !equivalences[emisCode]) equivalences[emisCode] = equivalence;
 
             if (equivalence && !acceptedEquivalences.includes(equivalence)) {
               return null; // Rejected due to equivalence filter
@@ -148,7 +168,8 @@ async function tryConceptMapTranslation(
  */
 export async function translateEmisCodeToSnomed(
   emisCode: string,
-  equivalenceFilter: EquivalenceFilter = 'strict'
+  equivalenceFilter: EquivalenceFilter = 'strict',
+  equivalences?: Record<string, string>
 ): Promise<TranslatedCode | null> {
   const token = await getAccessToken();
   const acceptedEquivalences = getAcceptedEquivalences(equivalenceFilter);
@@ -158,14 +179,14 @@ export async function translateEmisCodeToSnomed(
   const fallbackId = await getFallbackConceptMapId(token);
 
   // Try main ConceptMap first
-  const result = await tryConceptMapTranslation(emisCode, primaryId, token, acceptedEquivalences);
+  const result = await tryConceptMapTranslation(emisCode, primaryId, token, acceptedEquivalences, equivalences);
   if (result) {
     return result;
   }
 
   // If main ConceptMap failed (non-404 error) or returned no match, try fallback
   console.log(`Trying fallback ConceptMap for EMIS code ${emisCode}...`);
-  const fallbackResult = await tryConceptMapTranslation(emisCode, fallbackId, token, acceptedEquivalences);
+  const fallbackResult = await tryConceptMapTranslation(emisCode, fallbackId, token, acceptedEquivalences, equivalences);
   if (fallbackResult) {
     console.log(`Fallback ConceptMap succeeded for EMIS code ${emisCode}`);
     return fallbackResult;
@@ -183,7 +204,8 @@ export async function translateEmisCodeToSnomed(
  */
 export async function translateEmisCodesToSnomed(
   emisCodes: string[],
-  equivalenceFilter: EquivalenceFilter = 'strict'
+  equivalenceFilter: EquivalenceFilter = 'strict',
+  equivalences?: Record<string, string>
 ): Promise<Map<string, TranslatedCode>> {
   const mapping = new Map<string, TranslatedCode>();
   const uniqueCodes = [...new Set(emisCodes)];
@@ -195,7 +217,8 @@ export async function translateEmisCodesToSnomed(
   let failureCount = 0;
 
   await sequentialWithDelay(uniqueCodes, async (emisCode) => {
-    const translatedCode = await translateEmisCodeToSnomed(emisCode, equivalenceFilter);
+    const translatedCode = await translateEmisCodeToSnomed(emisCode, equivalenceFilter, equivalences);
+    if (equivalences && !equivalences[emisCode]) equivalences[emisCode] = 'unmapped';
     if (translatedCode) {
       mapping.set(emisCode, translatedCode);
       successCount++;
@@ -371,9 +394,9 @@ export async function resolveHistoricalConcepts(
  * Parse a single ConceptMap $translate response entry and extract the translated code.
  * Reuses the same logic as tryConceptMapTranslation.
  */
-function parseTranslateResponse(
+export function parseTranslateResponse(
   data: ConceptMapTranslateResponse,
-  acceptedEquivalences: string[]
+  acceptedEquivalences?: string[]
 ): TranslatedCode | null {
   if (!data.parameter) return null;
   const resultParam = data.parameter.find((p) => p.name === 'result');
@@ -383,7 +406,7 @@ function parseTranslateResponse(
 
   const equivalencePart = matchParam.part.find((p) => p.name === 'equivalence');
   const equivalence = equivalencePart?.valueCode || equivalencePart?.valueString;
-  if (equivalence && !acceptedEquivalences.includes(equivalence)) return null;
+  if (equivalence && acceptedEquivalences && !acceptedEquivalences.includes(equivalence)) return null;
 
   const conceptPart = matchParam.part.find((p) => p.name === 'concept');
   if (!conceptPart?.valueCoding?.code) return null;
@@ -395,6 +418,14 @@ function parseTranslateResponse(
   };
 }
 
+function checkTranslationEntry(entry: any): void {
+  const status = entry?.response?.status;
+  if (status?.startsWith('404')) return;
+  if (!status?.startsWith('2') || !entry.resource?.parameter) {
+    throw new Error(`Incomplete ConceptMap translation response (${status || 'missing entry'})`);
+  }
+}
+
 /**
  * Batch translate EMIS codes using a FHIR Bundle.
  * Sends one HTTP request for up to ~500 codes instead of one request per code.
@@ -402,7 +433,8 @@ function parseTranslateResponse(
  */
 export async function batchTranslateEmisCodes(
   emisCodes: string[],
-  equivalenceFilter: EquivalenceFilter = 'strict'
+  equivalenceFilter: EquivalenceFilter = 'strict',
+  equivalences: Record<string, string> = {}
 ): Promise<Record<string, TranslatedCode | null>> {
   if (emisCodes.length === 0) return {};
 
@@ -461,7 +493,10 @@ export async function batchTranslateEmisCodes(
   if (primaryResponse.entry) {
     for (let i = 0; i < emisCodes.length; i++) {
       const entry = primaryResponse.entry[i];
+      checkTranslationEntry(entry);
       if (entry?.response?.status?.startsWith('2') && entry.resource) {
+        const unfiltered = parseTranslateResponse(entry.resource);
+        if (unfiltered?.equivalence) equivalences[emisCodes[i]] = unfiltered.equivalence;
         const translated = parseTranslateResponse(entry.resource, acceptedEquivalences);
         if (translated) {
           results[emisCodes[i]] = translated;
@@ -472,7 +507,7 @@ export async function batchTranslateEmisCodes(
       failedCodes.push(emisCodes[i]);
     }
   } else {
-    failedCodes.push(...emisCodes);
+    throw new Error('Incomplete primary ConceptMap batch response');
   }
 
   console.log(`Primary ConceptMap: ${emisCodes.length - failedCodes.length} translated, ${failedCodes.length} need fallback`);
@@ -486,7 +521,10 @@ export async function batchTranslateEmisCodes(
     if (fallbackResponse.entry) {
       for (let i = 0; i < failedCodes.length; i++) {
         const entry = fallbackResponse.entry[i];
+        checkTranslationEntry(entry);
         if (entry?.response?.status?.startsWith('2') && entry.resource) {
+          const unfiltered = parseTranslateResponse(entry.resource);
+          if (unfiltered?.equivalence && !equivalences[failedCodes[i]]) equivalences[failedCodes[i]] = unfiltered.equivalence;
           const translated = parseTranslateResponse(entry.resource, acceptedEquivalences);
           if (translated) {
             results[failedCodes[i]] = translated;
@@ -497,12 +535,11 @@ export async function batchTranslateEmisCodes(
         results[failedCodes[i]] = null;
       }
     } else {
-      for (const code of failedCodes) {
-        results[code] = null;
-      }
+      throw new Error('Incomplete fallback ConceptMap batch response');
     }
   }
 
+  for (const code of emisCodes) equivalences[code] ||= 'unmapped';
   const successCount = Object.values(results).filter(v => v !== null).length;
   console.log(`Batch translation complete: ${successCount}/${emisCodes.length} translated`);
   return results;

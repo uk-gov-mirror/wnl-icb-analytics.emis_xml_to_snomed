@@ -274,6 +274,7 @@ export interface ValueSetGroup {
     isRefset: boolean;
     translatedTo?: string; // SNOMED code after ConceptMap translation
     translatedToDisplay?: string; // Display name of translated SNOMED code
+    translationEquivalence?: string;
   }>;
   // Exception (excluded codes) metadata with translation tracking
   exceptions?: Array<{
@@ -352,6 +353,7 @@ export interface TranslateCodesRequest {
 export interface TranslateCodesResponse {
   success: boolean;
   translations?: Record<string, TranslatedCode | null>;
+  equivalences?: Record<string, string>;
   error?: string;
 }
 
@@ -391,6 +393,8 @@ export interface Rf2RefsetResponse {
 }
 
 export interface RawValueSetExpansion {
+  exceptionResolutions?: import('./exception-resolver').ExceptionResolution[];
+  expansionError?: string;
   concepts: SnomedConcept[];
   parentCodes: string[];
   eclExpression?: string;

@@ -128,7 +128,7 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
       filename = `${sanitisedName}_${type}_${date}.csv`;
 
       if (type === 'xml' && group.originalCodes) {
-        const headers = ['Original Code', 'Display', 'Code System', 'Include Children', 'Translated Code', 'Translated Display'];
+        const headers = ['Original Code', 'Display', 'Code System', 'Include Children', 'Translated Code', 'Translated Display', 'Translation Equivalence'];
         const rows = group.originalCodes.map((oc: any) => [
           oc.originalCode,
           `"${oc.displayName.replace(/"/g, '""')}"`,
@@ -136,6 +136,7 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
           oc.includeChildren ? 'Yes' : 'No',
           oc.translatedTo || '',
           oc.translatedToDisplay ? `"${oc.translatedToDisplay.replace(/"/g, '""')}"` : '',
+          oc.translationEquivalence || 'unmapped',
         ]);
         csvContent = [headers.join(','), ...rows.map((r: string[]) => r.join(','))].join('\n');
       } else {
@@ -416,6 +417,7 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
                                       <TableHead className="w-20 text-center whitespace-nowrap">Children</TableHead>
                                       <TableHead className="w-32 whitespace-nowrap">Translated Code</TableHead>
                                       <TableHead className="min-w-[150px]">Translated Display</TableHead>
+                                      <TableHead>Translation equivalence</TableHead>
                                     </TableRow>
                                   </TableHeader>
                                   <TableBody>
@@ -454,6 +456,7 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
                                         <TableCell className="text-sm text-muted-foreground">
                                           {oc.translatedToDisplay || ''}
                                         </TableCell>
+                                        <TableCell>{oc.translationEquivalence || 'unmapped'}</TableCell>
                                       </TableRow>
                                       );
                                     })}
