@@ -192,6 +192,8 @@ ConceptMap or its recorded equivalence. The list contains the clinical sources;
 targets and membership differences still need publication review.
 Five generic fluticasone and beclometasone nasal-spray exceptions use their active
 nasal VMPs and AMP descendants. Non-nasal inhaled preparations remain included.
+The beclometasone overrides also retain the loaded international nasal-spray
+code `766418004` exactly, so the family correction cannot reintroduce it.
 
 `exception_translation_mismatches.json` checks both current translations and
 the targets actually applied, including loaded fallback and override targets.

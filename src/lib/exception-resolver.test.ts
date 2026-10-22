@@ -251,6 +251,7 @@ test('each nasal override removes its complete dm+d family and retains inhaled c
   const families = ['fluticasone', 'beclometasone'].map(name => JSON.parse(readFileSync(
     new URL(`./fixtures/${name}-nasal-family.json`, import.meta.url), 'utf8')));
   const nasal = families.flatMap(f => f.concepts.map((c: { code: string; display: string }) => concept(c.code, c.display)));
+  const international = concept('766418004', 'Beclometasone dipropionate 50 microgram/actuation nasal spray');
   for (const family of families) assert.equal(family.concepts.length, family.total);
   const inhaled = [concept('42292311000001106', 'Beclometasone 100micrograms/dose inhaler'),
     concept('39111211000001103', 'Fluticasone 125micrograms/dose inhaler CFC free'),
@@ -262,12 +263,13 @@ test('each nasal override removes its complete dm+d family and retains inhaled c
     for (const override of overrides) {
       const exceptions = [{ code: override.emisCode, displayName: override.emisDisplay }];
       const resolutions = await resolveExceptions(exceptions, {}, {}, async () => nasal, none,
-        { [override.emisCode]: '396064000' }, { codeSystem: 'SCT_CONST', classifyTarget: async () => 'preparation' });
+        { [override.emisCode]: '396064000' }, { codeSystem: 'SCT_CONST', classifyTarget: async () => 'preparation',
+          findExactTarget: async () => [international] });
       const family = families.find(f => f.concepts.some((c: { code: string }) => c.code === override.targets[0].code))!;
       globalThis.fetch = async (input, init) => {
         if (input === '/api/terminology/resolve-exceptions') return Response.json({ success: true, resolutions });
         if (input === '/api/terminology/rf2-refset') return Response.json({ success: true,
-          refsets: { '100000': { members: [...nasal, ...inhaled] } } });
+          refsets: { '100000': { members: [...nasal, international, ...inhaled] } } });
         const { ecl } = JSON.parse(init!.body as string);
         assert.equal(ecl, `<< ${override.targets[0].code}`);
         return Response.json({ success: true, total: family.total, concepts: family.concepts });
@@ -277,6 +279,7 @@ test('each nasal override removes its complete dm+d family and retains inhaled c
       const remaining = new Set(result.concepts.map(c => c.code));
       assert.equal(result.expansionError, undefined);
       assert.ok(family.concepts.every((c: { code: string }) => !remaining.has(c.code)), override.emisCode);
+      assert.ok((override.exactTargets || []).every(c => !remaining.has(c.code)), override.emisCode);
       assert.ok(inhaled.every(c => remaining.has(c.code)), override.emisCode);
     }
   } finally { globalThis.fetch = nativeFetch; }

@@ -34,6 +34,7 @@ export const EXCEPTION_OVERRIDES: Array<{
     { emisCode: '133741000033118', emisDisplay: 'Beclomethasone Dipropionate Nasal spray 50 micrograms/dose' },
   ].map(xml => ({ version: 3, ...xml, mode: 'dmd_family' as const,
     targets: [{ code: '39111911000001107', display: 'Beclometasone 50micrograms/dose nasal spray' }],
-    reason: 'The XML excludes generic beclometasone nasal spray. The legacy international target misses the nasal VMP and its AMPs; exclude that formulation family and retain inhaled products.',
-    source: `UK dm+d VMP 39111911000001107 (Beclometasone 50micrograms/dose nasal spray) and AMP descendants; XML exception ${xml.emisCode} (${xml.emisDisplay})` })),
+    exactTargets: [{ code: '766418004', display: 'Beclometasone dipropionate 50 microgram/actuation nasal spray' }],
+    reason: 'The XML excludes generic beclometasone nasal spray. The legacy international target misses the nasal VMP and its AMPs; exclude that formulation family, retain the international nasal code exactly and retain inhaled products.',
+    source: `UK dm+d VMP 39111911000001107 (Beclometasone 50micrograms/dose nasal spray) and AMP descendants; SNOMED 766418004; XML exception ${xml.emisCode} (${xml.emisDisplay})` })),
 ];
