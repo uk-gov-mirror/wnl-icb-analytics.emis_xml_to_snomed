@@ -69,6 +69,19 @@ npm run start
 
 ## Architecture
 
+### Criterion rendering
+
+Value sets within one filter are joined with OR. Separate filters are joined
+with AND, including filters on the same column. Status and prescription type
+remain separate filters. When code lists share a column, one record must match
+all those filters, so lists with no overlap select no records.
+
+Filters select candidate records first. A restriction then keeps the latest or
+earliest N records in its stated order and applies its test to the kept records.
+For N greater than 1, at least one kept record must meet the test. Date wording
+distinguishes strict bounds from inclusive bounds and retains the search-date
+upper bound.
+
 ### Technology Stack
 
 - **Framework**: Next.js 15 with App Router
