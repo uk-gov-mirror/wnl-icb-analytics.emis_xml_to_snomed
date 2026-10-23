@@ -110,7 +110,8 @@ function friendlyBoundary(b: RangeBoundary | undefined, column?: string): string
   // Named temporal: "Last", "This", "Next"
   if (['Last', 'This', 'Next'].includes(val)) {
     const unitLabel = UNIT_LABELS[unit] ?? unit.toLowerCase();
-    return `${operatorWords} ${val} ${unitLabel}`.trim();
+    const period = `${val.toLowerCase()} ${unitLabel}`;
+    return `${operatorWords} ${['GTE', 'GTEQ'].includes(op) ? `the start of ${period}` : period}`.trim();
   }
 
   const num = parseInt(val, 10);
@@ -158,6 +159,21 @@ export function formatColumnFilterRange(r: DateRange | undefined, column?: strin
   return fromStr || toStr || '';
 }
 
+/** Named periods arrive as flattened XML variable tokens. */
+export function humanizeRawTemporal(value: string, column?: string): string {
+  const month = value.match(/^(\d+) MONTH ABSOLUTE$/i);
+  if (column === 'DOB' && month && Number(month[1]) >= 1 && Number(month[1]) <= 12) {
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    return `in ${months[Number(month[1]) - 1]}`;
+  }
+  const match = value.match(/^(Last|This|Next)\s+([A-Z]+)(?:\s+RELATIVE)?$/i);
+  if (!match) return value;
+  const unit = UNIT_LABELS[match[2].toUpperCase()] || match[2].toLowerCase();
+  return `in ${match[1].toLowerCase()} ${unit}`;
+}
+
+export const RESTRICTION_EVALUATION_ORDER = 'Filters select candidate records before restrictions rank and test them.';
+
 export function formatValueSetCondition<T extends { isAllValuesExcept?: boolean }>(
   sets: T[],
   notIn: boolean,
@@ -187,7 +203,7 @@ export function formatRestriction(r: SearchRestriction): string {
     if (filter.valueSets?.length) {
       return `${name} ${formatValueSetCondition(filter.valueSets, filter.inNotIn === 'NOTIN', restrictionSetLabel)}`;
     }
-    const value = formatColumnFilterRange(filter.range, filter.columns[0]) || filter.singleValue;
+    const value = formatColumnFilterRange(filter.range, filter.columns[0]) || humanizeRawTemporal(filter.singleValue || '', filter.columns[0]);
     return value ? `${name} ${filter.inNotIn === 'NOTIN' ? 'not ' : ''}${value}` : '';
   }).filter(Boolean);
   if (tests.length === 0 && r.conditions?.length) {
@@ -202,17 +218,17 @@ export function formatRestriction(r: SearchRestriction): string {
     }
   }
   if (r.recordCount == null) {
-    return tests.length ? `Filters select candidate records; then require ${tests.join(' AND ')}` : r.description || 'Unknown restriction';
+    return tests.length ? `Require ${tests.join(' AND ')}` : r.description || 'Unknown restriction';
   }
-  const direction = r.direction === 'DESC' ? 'latest' : 'earliest';
+  const direction = r.direction === 'DESC' ? 'latest' : r.direction === 'ASC' ? 'earliest' : 'first';
   const order = (r.orderColumns ?? []).map((column) =>
     `${label(column.column)}${column.direction && column.direction !== r.direction ? ` ${column.direction}` : ''}`).join(', ');
-  const rank = `Filters select candidate records; keep the ${direction} ${r.recordCount}${order ? ` by ${order}` : ''}`;
+  const rank = `Keep the ${direction} ${r.recordCount}${order ? ` by ${order}` : ''}`;
   if (!tests.length) return rank;
   const test = tests.join(' AND ');
   return r.recordCount === 1
-    ? `${rank}; then apply the test to the kept record: ${test}`
-    : `${rank}; then the criterion passes if at least one of the kept records meets the test: ${test}`;
+    ? `${rank}, then test the kept record: ${test}`
+    : `${rank}; passes if at least one kept record meets the test: ${test}`;
 }
 
 /**

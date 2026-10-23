@@ -10,7 +10,7 @@ import type {
   ColumnFilter,
   RestrictionCondition,
 } from '@/lib/types';
-import { formatColumnFilterRange, formatOperator, formatRelationship, formatRestriction, formatRangeBoundary, formatValueSetCondition } from '@/lib/rule-format-utils';
+import { formatColumnFilterRange, formatOperator, formatRelationship, formatRestriction, formatRangeBoundary, formatValueSetCondition, humanizeRawTemporal, RESTRICTION_EVALUATION_ORDER } from '@/lib/rule-format-utils';
 import { generateValueSetFriendlyName, generateValueSetHash } from '@/lib/valueset-utils';
 
 export interface ValueSetSummary {
@@ -21,6 +21,8 @@ export interface ValueSetSummary {
   codeSystem: string;
   cluster: string | null;
   exceptionCount: number;
+  /** Operators of kept-record tests using this set. */
+  testOperators?: string[];
   /** True when the filter matches every value EXCEPT the listed ones */
   isAllValuesExcept: boolean;
   codes: Array<{
@@ -93,7 +95,11 @@ export interface SameColumnConjunction {
   valueSetNames: string[];
 }
 
-export const SAME_COLUMN_CONJUNCTION_CAVEAT = "A single record must match every one of these filters. Check that the lists overlap; if they don't, this criterion selects nobody.";
+export const SAME_COLUMN_CONJUNCTION_CAVEAT = "Check that the lists overlap; if they don't, this criterion selects nobody.";
+
+export function formatSameColumnConjunction(warning: SameColumnConjunction): string {
+  return `A single record must match every ${columnLabel(warning.column)} filter (code lists: ${warning.valueSetNames.join(', ')}). ${SAME_COLUMN_CONJUNCTION_CAVEAT}`;
+}
 
 export interface RelationshipSummary {
   parentColumn: string | null;
@@ -321,7 +327,7 @@ export function getCriterionDisplayData(criterion: SearchCriterion): CriterionDi
       const isEnum = cf.valueSets.every((vs) => vs.codeSystem?.toUpperCase() === 'EMISINTERNAL');
       const simpleEnum = isEnum && cf.valueSets.length === 1 && !cf.valueSets[0].isAllValuesExcept;
       filters.push({
-        label: simpleEnum ? `${name}${op === 'NOTIN' ? ' not' : ''}:` : name,
+        label: simpleEnum ? `${name}${op === 'NOTIN' ? ' not in' : ''}:` : name,
         value: simpleEnum
           ? cf.valueSets.flatMap((vs) => vs.values.map((value) => value.displayName || prettifyEnumValue(value.code))).join(', ')
           : formatValueSetCondition(cf.valueSets, op === 'NOTIN', (vs) => vs.description || formatValueSetPreview(vs)),
@@ -329,7 +335,7 @@ export function getCriterionDisplayData(criterion: SearchCriterion): CriterionDi
       });
       continue;
     }
-    const value = formatColumnFilterRange(cf.range, cf.columns[0]) || cf.singleValue
+    const value = formatColumnFilterRange(cf.range, cf.columns[0]) || humanizeRawTemporal(cf.singleValue || '', cf.columns[0])
       || (cf.parameter ? `matches the runtime parameter ${cf.parameter.name}` : '');
     if (value) filters.push({ label: name, value: `${op === 'NOTIN' ? 'not ' : ''}${value}`, range: cf.range });
   }
@@ -522,13 +528,6 @@ function buildFilterSummary(
 ): CriterionFilterSummary {
   const primaryColumn = filter.columns[0] || '';
   const displayName = filter.displayName || filter.columns.join(', ') || null;
-  const renderedValue = formatColumnFilterRange(filter.range, primaryColumn)
-    || filter.singleValue
-    || (filter.parameter ? `runtime parameter ${filter.parameter.name}` : '');
-  let rendered = renderedValue
-    ? `${displayName || primaryColumn}${filter.inNotIn ? ` ${filter.inNotIn}` : ''} ${renderedValue}`.trim()
-    : displayName || primaryColumn;
-
   const summary: CriterionFilterSummary = {
     id: filter.id || null,
     columns: filter.columns,
@@ -536,13 +535,14 @@ function buildFilterSummary(
     operator: filter.inNotIn || null,
     operatorSymbol: filter.inNotIn ? formatOperator(filter.inNotIn) : null,
     singleValue: filter.singleValue || null,
-    rendered,
+    rendered: '',
     range: buildDateRangeSummary(filter.range, primaryColumn),
     valueSets: (filter.valueSets ?? []).map((vs) => buildValueSetSummary(vs, friendlyNameMap)),
     parameter: filter.parameter ? { name: filter.parameter.name } : null,
   };
-  if (summary.valueSets.length > 0) rendered = humanFilter(summary);
-  return { ...summary, rendered };
+  return { ...summary, rendered: filter.parameter
+    ? `${filterLabel(summary)} matches the runtime parameter ${filter.parameter.name}`
+    : humanFilter(summary) };
 }
 
 function buildRelationshipSummary(criterion: SearchCriterion): RelationshipSummary | null {
@@ -598,7 +598,12 @@ function buildCriterionLogicSummary(
     restrictions: criterion.restrictions.map(buildRestrictionSummary),
     restrictionValueSets: displayData.testValueSets
       .filter((vs) => !nestedVsIds.has(vs.id))
-      .map((vs) => buildValueSetSummary(vs, friendlyNameMap)),
+      .map((vs) => ({
+        ...buildValueSetSummary(vs, friendlyNameMap),
+        testOperators: [...new Set(criterion.restrictions.flatMap((restriction) =>
+          (restriction.testFilters ?? []).filter((filter) => filter.valueSets?.some((set) => set.id === vs.id))
+            .map((filter) => filter.inNotIn || 'IN')))],
+      })),
     sameColumnConjunctions: getSameColumnConjunctions(criterion, friendlyNameMap),
     linkedCriteria: criterion.linkedCriteria.map((linked) => buildCriterionLogicSummary(linked, friendlyNameMap)),
     nestedGroups,
@@ -709,7 +714,11 @@ export function buildRulesMarkdown(report: EmisReport, allReports: EmisReport[])
         }
       }
     }
+    for (const warning of criterionSummary.sameColumnConjunctions) {
+      lines.push(`${indent}  - ${formatSameColumnConjunction(warning)}`);
+    }
     if (restrictions.length > 0) {
+      lines.push(`${indent}  - ${RESTRICTION_EVALUATION_ORDER}`);
       const then = restrictions.map((restriction) => (restriction.label ? `${restriction.label} ${restriction.value}` : restriction.value)).join(' AND ');
       lines.push(`${indent}  - Then: ${then}`);
       for (const restriction of criterionSummary.restrictions) {
@@ -736,7 +745,7 @@ export function buildRulesMarkdown(report: EmisReport, allReports: EmisReport[])
       if (criterionSummary.restrictionValueSets.length > 0) {
         lines.push(`${indent}    - Restriction test ValueSets (test the kept record, not code lists):`);
         for (const vs of criterionSummary.restrictionValueSets) {
-          lines.push(`${indent}      - \`${vs.friendlyName}\`: ${vs.preview} (${vs.codeCount} code${vs.codeCount === 1 ? '' : 's'})`);
+          lines.push(`${indent}      - \`${vs.friendlyName}\` [${vs.testOperators?.join(', ') || 'IN'}]: ${vs.preview} (${vs.codeCount} code${vs.codeCount === 1 ? '' : 's'})`);
         }
       }
     }
@@ -844,7 +853,10 @@ function buildCriterionPhrase(criterion: SearchCriterion): string {
     }).join(' AND ')}`);
   }
   if (restrictions.length > 0) {
-    parts.push(`then ${restrictions.map((restriction) => restriction.label ? `${restriction.label} ${restriction.value}` : restriction.value).join(' AND ')}`);
+    parts.push(`then ${restrictions.map((restriction) => {
+      const text = restriction.label ? `${restriction.label} ${restriction.value}` : restriction.value;
+      return (text.charAt(0).toLowerCase() + text.slice(1)).replace(', then test', ' and test');
+    }).join(' AND ')}`);
   }
   for (const group of criterion.baseCriteriaGroups ?? []) {
     parts.push(`with nested group (${group.criteria.map((nested) => buildCriterionPhrase(nested)).join(` ${group.memberOperator} `)})`);
@@ -1139,7 +1151,7 @@ const COLUMN_LABELS: Record<string, string> = {
   GMS_REGISTRATION_DATE: 'registration date',
   EPISODE: 'episode type',
   ISSUE_DATE: 'issue date',
-  STATUS: 'status',
+  STATUS: 'course status',
   RX_TYPE: 'prescription type',
 };
 
@@ -1152,16 +1164,9 @@ function columnLabel(column: string): string {
 }
 
 function describeValueSetRef(vs: ValueSetSummary): string {
-  const detail = vs.cluster ? `, cluster ${vs.cluster}` : vs.codeCount <= 3 ? `, ${vs.preview}` : '';
+  const preview = vs.preview.length > 120 ? `${vs.preview.slice(0, 117)}...` : vs.preview;
+  const detail = vs.cluster ? `, cluster ${vs.cluster}` : vs.codeCount <= 3 ? `, ${preview}` : '';
   return `\`${vs.friendlyName}\` (${vs.codeCount} code${vs.codeCount === 1 ? '' : 's'}${detail})`;
-}
-
-/** "This FISCALYEAR RELATIVE" → "in this fiscal year" */
-function humanizeRawTemporal(value: string): string {
-  const match = value.match(/^(Last|This|Next)\s+([A-Z]+)(?:\s+RELATIVE)?$/i);
-  if (!match) return value;
-  const unit = UNIT_WORDS[match[2].toUpperCase()] || match[2].toLowerCase();
-  return `in ${match[1].toLowerCase()} ${unit}`;
 }
 
 const UNIT_WORDS: Record<string, string> = {
@@ -1201,7 +1206,7 @@ function humanFilter(filter: CriterionFilterSummary): string {
     if (filter.valueSets.every(isEnumValueSet)) {
       const values = (vs: ValueSetSummary) => vs.codes.map((code) => code.displayName || prettifyEnumValue(code.code)).join(', ');
       if (filter.valueSets.length === 1 && !filter.valueSets[0].isAllValuesExcept) {
-        return `${label}${notIn ? ' not' : ''}: ${values(filter.valueSets[0])}`;
+        return `${label}${notIn ? ' not in' : ''}: ${values(filter.valueSets[0])}`;
       }
       return `${label} ${formatValueSetCondition(filter.valueSets, notIn, values)}`;
     }
@@ -1209,7 +1214,7 @@ function humanFilter(filter: CriterionFilterSummary): string {
   }
   const value = filter.range?.rendered || filter.singleValue || '';
   if (!value) return label;
-  return `${label} ${notIn ? 'not ' : ''}${humanizeRawTemporal(value)}`.trim();
+  return `${label} ${notIn ? 'not ' : ''}${humanizeRawTemporal(value, filter.columns[0])}`.trim();
 }
 
 /** "DATE at least 93 days before ... parent record's DATE" → "its date at least 93 days before ... the date of the record above" */
@@ -1359,21 +1364,22 @@ function renderCriterionBlock(
     lines.push(`${indent}  - ${conjunction}${rendered}${addSymbolic ? `, \`${symbolic}\`` : ''}`);
     filterCount++;
   }
-  if (criterion.sameColumnConjunctions.length > 0) {
-    lines.push(`${indent}  - ${SAME_COLUMN_CONJUNCTION_CAVEAT}`);
+  for (const warning of criterion.sameColumnConjunctions) {
+    lines.push(`${indent}  - ${formatSameColumnConjunction(warning)}`);
   }
 
+  if (criterion.restrictions.length > 0) lines.push(`${indent}  - ${RESTRICTION_EVALUATION_ORDER}`);
   for (const restriction of criterion.restrictions) {
     const words = restriction.rendered;
     const symbolic = symbolicRestriction(restriction);
     const addSymbolic = symbolic && !words.includes(symbolic);
-    lines.push(`${indent}  - ${words}${addSymbolic ? ` — \`${symbolic}\`` : ''}`);
+    lines.push(`${indent}  - ${words}${addSymbolic ? `, \`${symbolic}\`` : ''}`);
   }
   // Test sets check the kept record's code; they are not the criterion's code list
   const testValueSets = criterion.restrictionValueSets.filter((vs) => !isEnumValueSet(vs));
   testValueSets.forEach((vs) => recordValueSetUse(ctx, vs));
   if (testValueSets.length > 0) {
-    lines.push(`${indent}  - Restriction test sets (applied after record selection): ${testValueSets.map(describeValueSetRef).join('; ')}`);
+    lines.push(`${indent}  - Restriction test sets (applied after record selection): ${testValueSets.map((vs) => `${describeValueSetRef(vs)} [${vs.testOperators?.join(', ') || 'IN'}]`).join('; ')}`);
   }
 
   let childIndex = 0;

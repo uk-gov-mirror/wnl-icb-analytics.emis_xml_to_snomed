@@ -10,8 +10,8 @@ import type {
   SearchCriterion,
   ValueSetGroup,
 } from '@/lib/types';
-import { formatRelationship } from '@/lib/rule-format-utils';
-import { buildLibraryItemReferenceSummary, buildRulesMarkdown, formatValueSetPreview, getCriterionDisplayData, getSameColumnConjunctions, SAME_COLUMN_CONJUNCTION_CAVEAT } from '@/lib/agent-report-utils';
+import { formatRelationship, RESTRICTION_EVALUATION_ORDER } from '@/lib/rule-format-utils';
+import { buildLibraryItemReferenceSummary, buildRulesMarkdown, formatValueSetPreview, getCriterionDisplayData, getSameColumnConjunctions, formatSameColumnConjunction } from '@/lib/agent-report-utils';
 import { generateValueSetFriendlyName } from '@/lib/valueset-utils';
 import { BnfHint } from '@/components/bnf-hint';
 import { Card, CardContent } from '@/components/ui/card';
@@ -616,6 +616,7 @@ function CriterionCard({
   const [isOpen, setIsOpen] = useState(true);
   const isLinked = depth > 0;
   const { testValueSets, filters, restrictions } = getCriterionDisplayData(criterion);
+  const conjunctions = getSameColumnConjunctions(criterion, friendlyNameMap);
 
   return (
     <div className={`rounded-md border ${isLinked ? 'border-l-2 border-l-blue-500 ml-4 bg-blue-500/5' : 'border-border bg-muted/30'}`}>
@@ -667,24 +668,26 @@ function CriterionCard({
                 ))}
               </div>
             )}
-            {getSameColumnConjunctions(criterion, friendlyNameMap).length > 0 && (
-              <p className="text-xs text-amber-700 dark:text-amber-300">{SAME_COLUMN_CONJUNCTION_CAVEAT}</p>
-            )}
+            {conjunctions.map((warning) => (
+              <p key={warning.column} className="text-xs text-amber-700 dark:text-amber-300">{formatSameColumnConjunction(warning)}</p>
+            ))}
 
             {/* Restrictions (record selection) */}
             {restrictions.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 items-center">
-                <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Then</span>
-                {restrictions.map((c, i) => (
-                  <span key={`r-${i}`} className="contents">
-                    {i > 0 && (
-                      <span className="text-[10px] text-muted-foreground font-medium">AND</span>
-                    )}
-                    <Badge variant="outline" className="bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/20 text-xs">
-                      {c.label ? `${c.label} ${c.value}` : c.value}
-                    </Badge>
-                  </span>
-                ))}
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">{RESTRICTION_EVALUATION_ORDER}</p>
+                <div className="flex flex-wrap gap-1.5 items-center">
+                  {restrictions.map((c, i) => (
+                    <span key={`r-${i}`} className="contents">
+                      {i > 0 && (
+                        <span className="text-[10px] text-muted-foreground font-medium">AND</span>
+                      )}
+                      <Badge variant="outline" className="bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/20 text-xs">
+                        {c.label ? `${c.label} ${c.value}` : c.value}
+                      </Badge>
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -704,6 +707,27 @@ function CriterionCard({
                 ))}
               </div>
             )}
+
+            {(criterion.baseCriteriaGroups ?? []).map((group, groupIndex) => (
+              <div key={groupIndex} className="space-y-2 mt-2 rounded border border-border p-2">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Requires nested group {groupIndex + 1}: {group.memberOperator === 'OR' ? 'ANY (OR)' : 'ALL (AND)'} of the following
+                </p>
+                {group.criteria.map((nested, nestedIndex) => (
+                  <div key={`${nested.id}-${nestedIndex}`}>
+                    {nestedIndex > 0 && <p className="text-xs font-medium text-muted-foreground">{group.memberOperator}</p>}
+                    <CriterionCard
+                      criterion={nested}
+                      index={nestedIndex}
+                      findExpanded={findExpanded}
+                      friendlyNameMap={friendlyNameMap}
+                      allReports={allReports}
+                      depth={depth + 1}
+                    />
+                  </div>
+                ))}
+              </div>
+            ))}
 
             {/* Linked criteria */}
             {criterion.linkedCriteria.length > 0 && (

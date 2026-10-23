@@ -82,6 +82,13 @@ For N greater than 1, at least one kept record must meet the test. Date wording
 distinguishes strict bounds from inclusive bounds and retains the search-date
 upper bound.
 
+#### Known gaps
+
+Library-item filters within list-report columns are not parsed, so their
+same-column conjunctions are not shown or flagged. Guides omit excluded codes
+inside filters. Some reused `_vsN` names refer to different code lists within
+one report; use the source value-set IDs to distinguish them.
+
 ### Technology Stack
 
 - **Framework**: Next.js 15 with App Router
