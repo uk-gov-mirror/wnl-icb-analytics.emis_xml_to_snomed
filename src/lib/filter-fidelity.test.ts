@@ -13,7 +13,7 @@ import {
   getCriterionDisplayData,
   SAME_COLUMN_CONJUNCTION_CAVEAT,
 } from './agent-report-utils';
-import { formatColumnFilterRange, formatValueSetCondition, formatRestriction, humanizeRawTemporal, RESTRICTION_EVALUATION_ORDER } from './rule-format-utils';
+import { formatColumnFilterRange, formatValueSetCondition, formatRestriction, humanizeRawTemporal } from './rule-format-utils';
 
 const document = parseEmisXml(readFileSync(path.join(__dirname, 'fixtures/filter-fidelity.xml'), 'utf8'));
 
@@ -102,7 +102,7 @@ test('restriction singleValue dates use the same words as filter lines and API p
   const repeated = structuredClone(report);
   repeated.criteriaGroups![0].criteria[0].restrictions.push(structuredClone(criterion.restrictions[0]));
   for (const output of [buildImplementationGuideMarkdown(repeated, [repeated]), buildRulesMarkdown(repeated, [repeated]), renderRule(repeated)]) {
-    assert.equal(output.split(RESTRICTION_EVALUATION_ORDER).length - 1, 1);
+    assert.ok(!output.includes('Filters select candidate records'), 'Each restriction line states its own order');
   }
 });
 
@@ -163,7 +163,9 @@ test('Latest 1 NOTIN checks the kept record, without excluding candidates first'
   assert.match(guide, /Keep the latest 1 by date, then test the kept record: code not in/);
   assert.equal(detail.valueSets.length, 2);
   assert.equal(detail.restrictionValueSets.length, 1);
-  assert.ok(!guide.split(RESTRICTION_EVALUATION_ORDER)[0].includes('not in'));
+  assert.ok(!guide.split('Keep the latest 1 by date')[0].includes('not in'), 'The NOTIN test applies after ranking');
+  assert.match(guide, /\[NOTIN\]/);
+  assert.ok(!guide.includes('[IN]'));
 });
 
 test('date wording distinguishes strict and inclusive bounds around the search date', () => {

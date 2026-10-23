@@ -172,7 +172,6 @@ export function humanizeRawTemporal(value: string, column?: string): string {
   return `in ${match[1].toLowerCase()} ${unit}`;
 }
 
-export const RESTRICTION_EVALUATION_ORDER = 'Filters select candidate records before restrictions rank and test them.';
 
 export function formatValueSetCondition<T extends { isAllValuesExcept?: boolean }>(
   sets: T[],

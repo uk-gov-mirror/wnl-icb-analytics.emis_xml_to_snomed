@@ -10,7 +10,7 @@ import type {
   ColumnFilter,
   RestrictionCondition,
 } from '@/lib/types';
-import { formatColumnFilterRange, formatOperator, formatRelationship, formatRestriction, formatRangeBoundary, formatValueSetCondition, humanizeRawTemporal, RESTRICTION_EVALUATION_ORDER } from '@/lib/rule-format-utils';
+import { formatColumnFilterRange, formatOperator, formatRelationship, formatRestriction, formatRangeBoundary, formatValueSetCondition, humanizeRawTemporal } from '@/lib/rule-format-utils';
 import { generateValueSetFriendlyName, generateValueSetHash } from '@/lib/valueset-utils';
 
 export interface ValueSetSummary {
@@ -718,7 +718,6 @@ export function buildRulesMarkdown(report: EmisReport, allReports: EmisReport[])
       lines.push(`${indent}  - ${formatSameColumnConjunction(warning)}`);
     }
     if (restrictions.length > 0) {
-      lines.push(`${indent}  - ${RESTRICTION_EVALUATION_ORDER}`);
       const then = restrictions.map((restriction) => (restriction.label ? `${restriction.label} ${restriction.value}` : restriction.value)).join(' AND ');
       lines.push(`${indent}  - Then: ${then}`);
       for (const restriction of criterionSummary.restrictions) {
@@ -745,7 +744,7 @@ export function buildRulesMarkdown(report: EmisReport, allReports: EmisReport[])
       if (criterionSummary.restrictionValueSets.length > 0) {
         lines.push(`${indent}    - Restriction test ValueSets (test the kept record, not code lists):`);
         for (const vs of criterionSummary.restrictionValueSets) {
-          lines.push(`${indent}      - \`${vs.friendlyName}\` [${vs.testOperators?.join(', ') || 'IN'}]: ${vs.preview} (${vs.codeCount} code${vs.codeCount === 1 ? '' : 's'})`);
+          lines.push(`${indent}      - \`${vs.friendlyName}\`${testOperatorSuffix(vs)}: ${vs.preview} (${vs.codeCount} code${vs.codeCount === 1 ? '' : 's'})`);
         }
       }
     }
@@ -1368,7 +1367,6 @@ function renderCriterionBlock(
     lines.push(`${indent}  - ${formatSameColumnConjunction(warning)}`);
   }
 
-  if (criterion.restrictions.length > 0) lines.push(`${indent}  - ${RESTRICTION_EVALUATION_ORDER}`);
   for (const restriction of criterion.restrictions) {
     const words = restriction.rendered;
     const symbolic = symbolicRestriction(restriction);
@@ -1379,7 +1377,7 @@ function renderCriterionBlock(
   const testValueSets = criterion.restrictionValueSets.filter((vs) => !isEnumValueSet(vs));
   testValueSets.forEach((vs) => recordValueSetUse(ctx, vs));
   if (testValueSets.length > 0) {
-    lines.push(`${indent}  - Restriction test sets (applied after record selection): ${testValueSets.map((vs) => `${describeValueSetRef(vs)} [${vs.testOperators?.join(', ') || 'IN'}]`).join('; ')}`);
+    lines.push(`${indent}  - Restriction test sets (applied after record selection): ${testValueSets.map((vs) => `${describeValueSetRef(vs)}${testOperatorSuffix(vs)}`).join('; ')}`);
   }
 
   let childIndex = 0;
@@ -1454,6 +1452,12 @@ function shortValueSetHash(summary: ValueSetSummary): string {
 
 function escapeTableCell(text: string): string {
   return text.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+}
+
+// Mark only exclusion tests; inclusion is the default reading
+function testOperatorSuffix(vs: { testOperators?: string[] }): string {
+  const ops = (vs.testOperators ?? []).filter((op) => op !== 'IN');
+  return ops.length > 0 ? ` [${ops.join(', ')}]` : '';
 }
 
 export function buildImplementationGuideMarkdown(report: EmisReport, allReports: EmisReport[]): string {

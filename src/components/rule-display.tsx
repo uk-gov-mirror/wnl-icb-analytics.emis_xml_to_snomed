@@ -10,7 +10,7 @@ import type {
   SearchCriterion,
   ValueSetGroup,
 } from '@/lib/types';
-import { formatRelationship, RESTRICTION_EVALUATION_ORDER } from '@/lib/rule-format-utils';
+import { formatRelationship } from '@/lib/rule-format-utils';
 import { buildLibraryItemReferenceSummary, buildRulesMarkdown, formatValueSetPreview, getCriterionDisplayData, getSameColumnConjunctions, formatSameColumnConjunction } from '@/lib/agent-report-utils';
 import { generateValueSetFriendlyName } from '@/lib/valueset-utils';
 import { BnfHint } from '@/components/bnf-hint';
@@ -675,7 +675,6 @@ function CriterionCard({
             {/* Restrictions (record selection) */}
             {restrictions.length > 0 && (
               <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">{RESTRICTION_EVALUATION_ORDER}</p>
                 <div className="flex flex-wrap gap-1.5 items-center">
                   {restrictions.map((c, i) => (
                     <span key={`r-${i}`} className="contents">
