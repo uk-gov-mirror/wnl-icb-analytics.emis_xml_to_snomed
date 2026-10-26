@@ -14,6 +14,7 @@ import {
   SnomedConcept,
   TranslatedCode,
   EclExpandResponse,
+  EmisConstituentsResponse,
   Rf2RefsetResponse,
   ResolveHistoricalResponse,
 } from './types';
@@ -136,6 +137,10 @@ export async function expandValueSetClientSide(
   const ukProductConcepts: SnomedConcept[] = [];
   const successfulSctConstCodes = new Set<string>();
   const sctConstNoProducts = new Map<string, { substanceCode: string; displayName: string }>();
+  const listedSubstances = sctConstCodes.flatMap((v) => v.translatedSnomedCode ? [v.translatedSnomedCode] : []);
+  const findConstituentSubstances = async (substanceCodes: string[]) => (await fetchApi<EmisConstituentsResponse>(
+    '/api/terminology/emis-constituents', { substanceCodes }, { isCancelled: options.isCancelled },
+  )).substanceCodes || [];
 
   for (const sctConstValue of sctConstCodes) {
     if (options.isCancelled?.()) throw new CancelledError();
@@ -152,6 +157,7 @@ export async function expandValueSetClientSide(
 
     const { products } = await expandSctConstProducts(
       substanceCode, excludedCodes, (ecl) => expandEcl(ecl, options), exactCodes,
+      { listedSubstances, findConstituentSubstances },
     );
 
     if (products.length > 0) {

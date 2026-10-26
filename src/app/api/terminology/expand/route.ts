@@ -16,7 +16,8 @@ import {
   findInactivePreparationCandidates,
   classifyExceptionTarget,
   translateEmisCodesToSnomed,
-  resolveHistoricalConcepts
+  resolveHistoricalConcepts,
+  findEmisConstituentSubstances
 } from '@/lib/terminology-client';
 import { formatForSql } from '@/lib/sql-formatter';
 import { generateValueSetHash, generateValueSetFriendlyName, generateValueSetId } from '@/lib/valueset-utils';
@@ -108,6 +109,7 @@ async function expandSingleValueSet(
 
   if (sctConstCodes.length > 0) {
     console.log(`Found ${sctConstCodes.length} SCT_CONST codes, expanding UK Products...`);
+    const listedSubstances = sctConstCodes.flatMap((v: ValueWithMetadata) => v.translatedSnomedCode ? [v.translatedSnomedCode] : []);
 
     for (const sctConstValue of sctConstCodes) {
       // Skip SCT_CONST codes that have no translation - cannot expand UK Products
@@ -126,6 +128,7 @@ async function expandSingleValueSet(
       try {
         const { products, productEcl, modificationEcls } = await expandSctConstProducts(
           substanceCode, vsExcludedCodes, expandEclQuery, exactCodes,
+          { listedSubstances, findConstituentSubstances: findEmisConstituentSubstances },
         );
         modificationEclExpressions.push(...modificationEcls);
         ukProductEclExpressions.push(productEcl);

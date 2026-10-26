@@ -398,6 +398,17 @@ export interface EclExpandResponse {
   error?: string;
 }
 
+export interface EmisConstituentsRequest {
+  substanceCodes: string[];
+}
+
+export interface EmisConstituentsResponse {
+  success: boolean;
+  /** Substances, from those requested, that have their own EMIS constituent code */
+  substanceCodes?: string[];
+  error?: string;
+}
+
 export interface Rf2RefsetRequest {
   refsetIds: string[];
 }

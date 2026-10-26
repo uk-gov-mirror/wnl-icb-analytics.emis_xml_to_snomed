@@ -574,6 +574,65 @@ export async function batchTranslateEmisCodes(
   return results;
 }
 
+/** EMIS constituent IDs: type digit 2, namespace 1000033, partition 11. */
+export const isEmisConstituentCode = (code: string) => /^\d+2100003311\d$/.test(code);
+
+/**
+ * Returns the substances that an EMIS constituent code maps to as equivalent,
+ * by reverse translation through the primary ConceptMap.
+ */
+export async function findEmisConstituentSubstances(substanceCodes: string[]): Promise<string[]> {
+  const codes = [...new Set(substanceCodes)];
+  if (codes.length === 0) return [];
+  const token = await getAccessToken();
+  const primaryId = await getPrimaryConceptMapId(token);
+  const found: string[] = [];
+  for (let i = 0; i < codes.length; i += 200) {
+    const chunk = codes.slice(i, i + 200);
+    const response = await fetch(TERMINOLOGY_SERVER_BASE, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/fhir+json; charset=utf-8',
+        'Content-Type': 'application/fhir+json; charset=utf-8',
+      },
+      body: JSON.stringify({
+        resourceType: 'Bundle',
+        type: 'batch',
+        entry: chunk.map(code => ({
+          request: { method: 'POST', url: `ConceptMap/${primaryId}/$translate` },
+          resource: {
+            resourceType: 'Parameters',
+            parameter: [
+              { name: 'code', valueCode: code },
+              { name: 'system', valueUri: SNOMED_CODE_SYSTEM },
+              { name: 'reverse', valueBoolean: true },
+            ],
+          },
+        })),
+      }),
+      signal: AbortSignal.timeout(120000),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`FHIR reverse translation failed (${response.status}): ${text.substring(0, 300)}`);
+    }
+    const bundle = await response.json();
+    if (!Array.isArray(bundle.entry) || bundle.entry.length !== chunk.length) throw new Error('Incomplete reverse translation response');
+    chunk.forEach((code, j) => {
+      const entry = bundle.entry[j];
+      checkTranslationEntry(entry);
+      const matches = (entry.resource?.parameter || []).filter((p: any) => p.name === 'match');
+      if (matches.some((m: any) => {
+        const equivalence = m.part?.find((p: any) => p.name === 'equivalence')?.valueCode;
+        const source = m.part?.find((p: any) => p.name === 'concept')?.valueCoding;
+        return equivalence === 'equivalent' && source?.system === EMIS_CODE_SYSTEM && isEmisConstituentCode(source.code || '');
+      })) found.push(code);
+    });
+  }
+  return found;
+}
+
 /**
  * Batch resolve historical concepts using a FHIR Bundle.
  * Sends one HTTP request for up to ~500 concepts instead of one per concept.

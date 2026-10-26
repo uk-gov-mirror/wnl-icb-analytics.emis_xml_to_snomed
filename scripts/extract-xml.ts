@@ -6,7 +6,7 @@ import { parseEmisXml } from '../src/lib/xml-parser';
 import { generateExpansionKey, generateValueSetHash, generateValueSetId } from '../src/lib/valueset-utils';
 import { buildNormalizedTables, ExtractionInstance } from '../src/lib/batch-assembly';
 import { expandValueSetClientSide } from '../src/lib/client-valueset-expander';
-import { batchTranslateEmisCodes, batchResolveHistorical, expandEclPage, expandEclQuery, findPreparationCandidates, findInactivePreparationCandidates, classifyExceptionTarget, getConceptMapVersions } from '../src/lib/terminology-client';
+import { batchTranslateEmisCodes, batchResolveHistorical, expandEclPage, expandEclQuery, findPreparationCandidates, findInactivePreparationCandidates, classifyExceptionTarget, getConceptMapVersions, findEmisConstituentSubstances } from '../src/lib/terminology-client';
 import { detectRF2Version } from '../src/lib/rf2-version';
 import { resolveExceptions } from '../src/lib/exception-resolver';
 import { preserveCatalogueIdentities } from '../src/lib/catalogue-identity';
@@ -68,6 +68,7 @@ async function main() {
     if (input === '/api/terminology/ecl-expand') return Response.json({ success: true, ...await expandEclPage(body.ecl, body.offset, body.count) });
     if (input === '/api/terminology/resolve-exceptions') return Response.json({ success: true,
       resolutions: await resolveExceptions(body.exceptions, body.translations, body.historical, findPreparationCandidates, findInactivePreparationCandidates, legacyTargets, { codeSystem: body.codeSystem, classifyTarget: classify, findExactTarget: expandEclQuery }) });
+    if (input === '/api/terminology/emis-constituents') return Response.json({ success: true, substanceCodes: await findEmisConstituentSubstances(body.substanceCodes) });
     if (input === '/api/terminology/resolve-historical') return Response.json({ success: true, resolutions: await batchResolveHistorical(body.conceptIds) });
     if (input === '/api/terminology/rf2-refset') {
       const found = await expandRefsetsFromRf2(body.refsetIds);
