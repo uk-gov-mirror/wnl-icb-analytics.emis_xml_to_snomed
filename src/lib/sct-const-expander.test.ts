@@ -66,9 +66,11 @@ async function fakeTerminology(ecl: string): Promise<SnomedConcept[]> {
   const modification = Object.keys(modificationsOf).find((code) => ecl === buildModificationOfEcl(code));
   if (modification) return modificationsOf[modification].map(concept);
   if (ecl.startsWith('<< 105590001')) return [];
-  const terms = [...ecl.matchAll(/762949000 = << (\d+)(?:, 732943007 = << (\d+))?\)/g)];
+  const codes = (group: string) => group.replace(/[()]/g, '').split(' OR ');
+  const terms = [...ecl.matchAll(/762949000 = << (\d+|\([\d OR]+\))(?:, 732943007 = << (\([\d OR]+\)))?\)/g)]
+    .map(([, precise, boss]) => ({ precise: codes(precise), boss: boss ? codes(boss) : undefined }));
   assert.ok(terms.length > 0, ecl);
-  return products.filter((p) => terms.some(([, precise, boss]) => p.precise === precise && (!boss || p.boss === boss))).map((p) => concept(p.code));
+  return products.filter((p) => terms.some((t) => t.precise.includes(p.precise) && (!t.boss || t.boss.includes(p.boss)))).map((p) => concept(p.code));
 }
 
 async function expandValueSet(listed: string[]) {
@@ -96,6 +98,15 @@ test('keeps sodium phosphate products where listed, otherwise only those with pr
 
 test('keeps formoterol fumarate dihydrate, a modification without its own EMIS constituent', async () => {
   assert.deepEqual(await expandValueSet([FORMOTEROL_FUMARATE]), ['formoterol-inhaler']);
+});
+
+test('keeps stopped modifications with a listed basis of strength in one grouped term', async () => {
+  const { productEcl, stoppedModifications } = await expandSctConstProducts(PRED, [], fakeTerminology, [], {
+    listedSubstances: [PRED],
+    findConstituentSubstances: async (candidates) => candidates.filter((code) => ownConstituents.has(code)),
+  });
+  assert.deepEqual(stoppedModifications, [ACETATE, HEXANOATE, SODIUM_PHOSPHATE]);
+  assert.ok(productEcl.endsWith(`(<< (< 10363601000001109 : 762949000 = << (${ACETATE} OR ${HEXANOATE} OR ${SODIUM_PHOSPHATE}), 732943007 = << (${PRED})))`));
 });
 
 test('follows every modification when no constituent lookup is given', async () => {

@@ -39,10 +39,9 @@ export async function expandSctConstProducts(
 
   const terms = Array.from(substances, (code) => `(${buildUkProductEcl(code)})`);
   const listed = [...new Set([substanceCode, ...(options.listedSubstances || [])])];
-  for (const code of stopped) {
-    for (const boss of listed) {
-      terms.push(`(<< (< ${UK_PRODUCT_CONCEPT} : ${HAS_PRECISE_ACTIVE_INGREDIENT} = << ${code}, ${HAS_BASIS_OF_STRENGTH_SUBSTANCE} = << ${boss}))`);
-    }
+  if (stopped.size > 0) {
+    // One term keeps the GET URL short; same members as one term per pair.
+    terms.push(`(<< (< ${UK_PRODUCT_CONCEPT} : ${HAS_PRECISE_ACTIVE_INGREDIENT} = << (${[...stopped].join(' OR ')}), ${HAS_BASIS_OF_STRENGTH_SUBSTANCE} = << (${listed.join(' OR ')})))`);
   }
   let productEcl = terms.join(' OR ');
   if (excludedCodes.length > 0 || exactExcludedCodes.length > 0) {
