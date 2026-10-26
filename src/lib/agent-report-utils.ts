@@ -10,7 +10,7 @@ import type {
   ColumnFilter,
   RestrictionCondition,
 } from '@/lib/types';
-import { formatColumnFilterRange, formatOperator, formatRelationship, formatRestriction, formatRangeBoundary } from '@/lib/rule-format-utils';
+import { formatColumnFilterRange, formatOperator, formatRelationship, formatRestriction, formatRangeBoundary, formatValueSetCondition, humanizeRawTemporal } from '@/lib/rule-format-utils';
 import { generateValueSetFriendlyName, generateValueSetHash } from '@/lib/valueset-utils';
 
 export interface ValueSetSummary {
@@ -21,6 +21,8 @@ export interface ValueSetSummary {
   codeSystem: string;
   cluster: string | null;
   exceptionCount: number;
+  /** Operators of kept-record tests using this set. */
+  testOperators?: string[];
   /** True when the filter matches every value EXCEPT the listed ones */
   isAllValuesExcept: boolean;
   codes: Array<{
@@ -36,7 +38,7 @@ export interface CriterionDisplayData {
   extraValueSets: EmisValueSet[];
   /** Sets that only test the record a restriction keeps, not code lists */
   testValueSets: EmisValueSet[];
-  filters: { label: string; value: string }[];
+  filters: { label: string; value: string; valueSets?: EmisValueSet[]; range?: DateRange }[];
   restrictions: { label: string; value: string }[];
 }
 
@@ -56,6 +58,7 @@ export interface DateRangeSummary {
 }
 
 export interface CriterionFilterSummary {
+  id: string | null;
   columns: string[];
   displayName: string | null;
   operator: string | null;
@@ -82,6 +85,20 @@ export interface CriterionRestrictionSummary {
   recordCount: number | null;
   direction: string | null;
   conditions: RestrictionConditionSummary[];
+  rendered: string;
+}
+
+export interface SameColumnConjunction {
+  criterionId: string;
+  column: string;
+  filterIds: string[];
+  valueSetNames: string[];
+}
+
+export const SAME_COLUMN_CONJUNCTION_CAVEAT = "Check that the lists overlap; if they don't, this criterion selects nobody.";
+
+export function formatSameColumnConjunction(warning: SameColumnConjunction): string {
+  return `A single record must match every ${columnLabel(warning.column)} filter (code lists: ${warning.valueSetNames.join(', ')}). ${SAME_COLUMN_CONJUNCTION_CAVEAT}`;
 }
 
 export interface RelationshipSummary {
@@ -106,6 +123,7 @@ export interface CriterionLogicSummary {
   restrictions: CriterionRestrictionSummary[];
   /** Code lists the restriction tests the kept record against */
   restrictionValueSets: ValueSetSummary[];
+  sameColumnConjunctions: SameColumnConjunction[];
   linkedCriteria: CriterionLogicSummary[];
   /** Nested criterion groups (<baseCriteriaGroup>) with their own operator */
   nestedGroups: Array<{ operator: string; criteria: CriterionLogicSummary[] }>;
@@ -278,78 +296,75 @@ export function formatValueSetPreview(vs: EmisValueSet): string {
 export function getCriterionDisplayData(criterion: SearchCriterion): CriterionDisplayData {
   const seenCodeHashes = new Set<string>();
   const dedupedValueSets: EmisValueSet[] = [];
-  for (const vs of criterion.valueSets) {
-    if (vs.isRestrictionTest) continue;
-    const codeKey = vs.values.map((v) => v.code).sort().join(',');
-    if (!seenCodeHashes.has(codeKey)) {
-      seenCodeHashes.add(codeKey);
-      dedupedValueSets.push(vs);
+  for (const filter of criterion.columnFilters) {
+    for (const vs of filter.valueSets ?? []) {
+      if (vs.codeSystem?.toUpperCase() === 'EMISINTERNAL') continue;
+      const codeKey = generateValueSetHash(vs.values.map((value) => value.code));
+      if (!seenCodeHashes.has(codeKey)) {
+        seenCodeHashes.add(codeKey);
+        dedupedValueSets.push(vs);
+      }
     }
   }
 
   const seenTestHashes = new Set<string>();
-  const testValueSets: EmisValueSet[] = [];
-  for (const vs of criterion.valueSets) {
-    if (!vs.isRestrictionTest) continue;
-    const codeKey = vs.values.map((v) => v.code).sort().join(',');
-    if (!seenTestHashes.has(codeKey)) {
-      seenTestHashes.add(codeKey);
-      testValueSets.push(vs);
-    }
-  }
+  const testValueSets = [
+    ...criterion.restrictions.flatMap((restriction) =>
+      (restriction.testFilters ?? []).flatMap((filter) => filter.valueSets ?? [])),
+    ...criterion.valueSets.filter((vs) => vs.isRestrictionTest),
+  ].filter((vs) => {
+    const hash = generateValueSetHash(vs.values.map((value) => value.code));
+    if (seenTestHashes.has(hash)) return false;
+    seenTestHashes.add(hash);
+    return true;
+  });
 
-  const criterionVsIds = new Set(criterion.valueSets.map((vs) => vs.id));
-  const extraValueSets: EmisValueSet[] = [];
+  const filters: CriterionDisplayData['filters'] = [];
   for (const cf of criterion.columnFilters) {
-    if (cf.valueSets && cf.columns[0]?.toUpperCase() === 'READCODE') {
-      for (const vs of cf.valueSets) {
-        const codeKey = vs.values.map((v) => v.code).sort().join(',');
-        if (!criterionVsIds.has(vs.id) && !seenCodeHashes.has(codeKey)) {
-          seenCodeHashes.add(codeKey);
-          extraValueSets.push(vs);
-          criterionVsIds.add(vs.id);
-        }
-      }
+    const name = toSentenceCase(filterLabel({ columns: cf.columns, displayName: cf.displayName || null }));
+    const op = cf.inNotIn?.toUpperCase() || '';
+    if (cf.valueSets?.length) {
+      const isEnum = cf.valueSets.every((vs) => vs.codeSystem?.toUpperCase() === 'EMISINTERNAL');
+      const simpleEnum = isEnum && cf.valueSets.length === 1 && !cf.valueSets[0].isAllValuesExcept;
+      filters.push({
+        label: simpleEnum ? `${name}${op === 'NOTIN' ? ' not in' : ''}:` : name,
+        value: simpleEnum
+          ? cf.valueSets.flatMap((vs) => vs.values.map((value) => value.displayName || prettifyEnumValue(value.code))).join(', ')
+          : formatValueSetCondition(cf.valueSets, op === 'NOTIN', (vs) => vs.description || formatValueSetPreview(vs)),
+        valueSets: isEnum ? undefined : cf.valueSets,
+      });
+      continue;
+    }
+    const value = formatColumnFilterRange(cf.range, cf.columns[0]) || humanizeRawTemporal(cf.singleValue || '', cf.columns[0])
+      || (cf.parameter ? `matches the runtime parameter ${cf.parameter.name}` : '');
+    if (value) filters.push({ label: name, value: `${op === 'NOTIN' ? 'not ' : ''}${value}`, range: cf.range });
+  }
+  const restrictions = criterion.restrictions.map((restriction) => ({ label: '', value: formatRestriction(restriction) }));
+  return { dedupedValueSets, extraValueSets: [], testValueSets, filters, restrictions };
+}
+
+export function getSameColumnConjunctions(
+  criterion: SearchCriterion,
+  friendlyNameMap: Map<string, string>,
+): SameColumnConjunction[] {
+  const byColumn = new Map<string, ColumnFilter[]>();
+  for (const filter of criterion.columnFilters) {
+    if (filter.inNotIn?.toUpperCase() !== 'IN' || !filter.valueSets?.length
+      || filter.valueSets.some((vs) => vs.isAllValuesExcept)) continue;
+    for (const column of filter.columns) {
+      const key = column.toUpperCase();
+      const filters = byColumn.get(key) ?? [];
+      filters.push(filter);
+      byColumn.set(key, filters);
     }
   }
-
-  const restrictions: { label: string; value: string }[] = [];
-  const filters: { label: string; value: string }[] = [];
-  for (const r of criterion.restrictions) {
-    restrictions.push({ label: '', value: formatRestriction(r) });
-  }
-  for (const cf of criterion.columnFilters) {
-    const primaryCol = cf.columns[0] || '';
-    const name = cf.displayName || cf.columns.join(', ');
-    const op = cf.inNotIn || '';
-    const rangeStr = formatColumnFilterRange(cf.range, primaryCol);
-    const singleVal = cf.singleValue;
-
-    if (cf.valueSets && cf.valueSets.length > 0 && primaryCol.toUpperCase() !== 'READCODE') {
-      const isDrugFilter = primaryCol.toUpperCase() === 'DRUG' ||
-        name.toUpperCase().startsWith('DRUG');
-      if (isDrugFilter) {
-        continue;
-      }
-      const vsNames = cf.valueSets.flatMap((vs) => vs.values.map((v) => v.displayName || v.code)).filter(Boolean);
-      if (vsNames.length > 0) {
-        const cleanLabel = name.replace(/\s*\(.*\)\s*$/, '').trim();
-        // <allValues> sets are exclusions; NOT IN inverts too
-        const allExcept = cf.valueSets.every((vs) => vs.isAllValuesExcept);
-        const negated = (op === 'NOTIN') !== allExcept;
-        filters.push({ label: `${cleanLabel} ${negated ? '≠' : '='}`, value: vsNames.join(', ') });
-        continue;
-      }
-    }
-
-    const valStr = rangeStr || singleVal || '';
-    if (valStr) {
-      const skipOp = op === 'IN' && (/^[<>=!]/.test(valStr) || /^[a-z]/i.test(valStr));
-      filters.push({ label: name, value: skipOp ? valStr : `${op ? op + ' ' : ''}${valStr}` });
-    }
-  }
-
-  return { dedupedValueSets, extraValueSets, testValueSets, filters, restrictions };
+  return [...byColumn].filter(([, filters]) => filters.length > 1).map(([column, filters]) => ({
+    criterionId: criterion.id,
+    column,
+    filterIds: filters.map((filter) => filter.id || `${criterion.id}:filter:${criterion.columnFilters.indexOf(filter) + 1}`),
+    valueSetNames: filters.flatMap((filter) => (filter.valueSets ?? []).map((vs) =>
+      friendlyNameMap.get(vs.id) || vs.description || formatValueSetPreview(vs))),
+  }));
 }
 
 function collectCriteria(criteria: SearchCriterion[], accumulator: SearchCriterion[]) {
@@ -503,6 +518,7 @@ function buildRestrictionSummary(restriction: SearchRestriction): CriterionRestr
     recordCount: restriction.recordCount ?? null,
     direction: restriction.direction ?? null,
     conditions: (restriction.conditions ?? []).map(buildRestrictionConditionSummary),
+    rendered: formatRestriction(restriction),
   };
 }
 
@@ -512,24 +528,21 @@ function buildFilterSummary(
 ): CriterionFilterSummary {
   const primaryColumn = filter.columns[0] || '';
   const displayName = filter.displayName || filter.columns.join(', ') || null;
-  const renderedValue = formatColumnFilterRange(filter.range, primaryColumn)
-    || filter.singleValue
-    || (filter.parameter ? `runtime parameter ${filter.parameter.name}` : '');
-  const rendered = renderedValue
-    ? `${displayName || primaryColumn}${filter.inNotIn ? ` ${filter.inNotIn}` : ''} ${renderedValue}`.trim()
-    : displayName || primaryColumn;
-
-  return {
+  const summary: CriterionFilterSummary = {
+    id: filter.id || null,
     columns: filter.columns,
     displayName,
     operator: filter.inNotIn || null,
     operatorSymbol: filter.inNotIn ? formatOperator(filter.inNotIn) : null,
     singleValue: filter.singleValue || null,
-    rendered,
+    rendered: '',
     range: buildDateRangeSummary(filter.range, primaryColumn),
     valueSets: (filter.valueSets ?? []).map((vs) => buildValueSetSummary(vs, friendlyNameMap)),
     parameter: filter.parameter ? { name: filter.parameter.name } : null,
   };
+  return { ...summary, rendered: filter.parameter
+    ? `${filterLabel(summary)} matches the runtime parameter ${filter.parameter.name}`
+    : humanFilter(summary) };
 }
 
 function buildRelationshipSummary(criterion: SearchCriterion): RelationshipSummary | null {
@@ -585,7 +598,13 @@ function buildCriterionLogicSummary(
     restrictions: criterion.restrictions.map(buildRestrictionSummary),
     restrictionValueSets: displayData.testValueSets
       .filter((vs) => !nestedVsIds.has(vs.id))
-      .map((vs) => buildValueSetSummary(vs, friendlyNameMap)),
+      .map((vs) => ({
+        ...buildValueSetSummary(vs, friendlyNameMap),
+        testOperators: [...new Set(criterion.restrictions.flatMap((restriction) =>
+          (restriction.testFilters ?? []).filter((filter) => filter.valueSets?.some((set) => set.id === vs.id))
+            .map((filter) => filter.inNotIn || 'IN')))],
+      })),
+    sameColumnConjunctions: getSameColumnConjunctions(criterion, friendlyNameMap),
     linkedCriteria: criterion.linkedCriteria.map((linked) => buildCriterionLogicSummary(linked, friendlyNameMap)),
     nestedGroups,
   };
@@ -695,6 +714,9 @@ export function buildRulesMarkdown(report: EmisReport, allReports: EmisReport[])
         }
       }
     }
+    for (const warning of criterionSummary.sameColumnConjunctions) {
+      lines.push(`${indent}  - ${formatSameColumnConjunction(warning)}`);
+    }
     if (restrictions.length > 0) {
       const then = restrictions.map((restriction) => (restriction.label ? `${restriction.label} ${restriction.value}` : restriction.value)).join(' AND ');
       lines.push(`${indent}  - Then: ${then}`);
@@ -722,7 +744,7 @@ export function buildRulesMarkdown(report: EmisReport, allReports: EmisReport[])
       if (criterionSummary.restrictionValueSets.length > 0) {
         lines.push(`${indent}    - Restriction test ValueSets (test the kept record, not code lists):`);
         for (const vs of criterionSummary.restrictionValueSets) {
-          lines.push(`${indent}      - \`${vs.friendlyName}\`: ${vs.preview} (${vs.codeCount} code${vs.codeCount === 1 ? '' : 's'})`);
+          lines.push(`${indent}      - \`${vs.friendlyName}\`${testOperatorSuffix(vs)}: ${vs.preview} (${vs.codeCount} code${vs.codeCount === 1 ? '' : 's'})`);
         }
       }
     }
@@ -816,21 +838,24 @@ function buildCriteriaSearchText(criteria: SearchCriterion[]): string {
 
 function buildCriterionPhrase(criterion: SearchCriterion): string {
   const parts: string[] = [];
-  const { dedupedValueSets, extraValueSets, filters, restrictions } = getCriterionDisplayData(criterion);
+  const { filters, restrictions } = getCriterionDisplayData(criterion);
   const label = criterion.displayName || criterion.table;
   parts.push(label);
   if (criterion.negation) {
     parts.push('NOT');
   }
-  const previewSets = [...dedupedValueSets, ...extraValueSets].map((vs) => formatValueSetPreview(vs));
-  if (previewSets.length > 0) {
-    parts.push(`with ${previewSets.join(' OR ')}`);
-  }
   if (filters.length > 0) {
-    parts.push(`where ${filters.map((filter) => filter.label ? `${filter.label} ${filter.value}` : filter.value).join(' AND ')}`);
+    parts.push(`where ${filters.map((filter, index) => {
+      const previous = filters[index - 1];
+      const repeatRangeLabel = previous?.label === filter.label && previous.range && filter.range;
+      return filter.label && !repeatRangeLabel ? `${filter.label} ${filter.value}` : filter.value;
+    }).join(' AND ')}`);
   }
   if (restrictions.length > 0) {
-    parts.push(`then ${restrictions.map((restriction) => restriction.label ? `${restriction.label} ${restriction.value}` : restriction.value).join(' AND ')}`);
+    parts.push(`then ${restrictions.map((restriction) => {
+      const text = restriction.label ? `${restriction.label} ${restriction.value}` : restriction.value;
+      return (text.charAt(0).toLowerCase() + text.slice(1)).replace(', then test', ' and test');
+    }).join(' AND ')}`);
   }
   for (const group of criterion.baseCriteriaGroups ?? []) {
     parts.push(`with nested group (${group.criteria.map((nested) => buildCriterionPhrase(nested)).join(` ${group.memberOperator} `)})`);
@@ -1045,6 +1070,14 @@ function buildAgentInterpretation(report: EmisReport, allReports: EmisReport[]) 
 
   return {
     decisionFlow,
+    sameColumnConjunctions: decisionFlow.flatMap((decision) => {
+      const collect = (criterion: CriterionLogicSummary): SameColumnConjunction[] => [
+        ...criterion.sameColumnConjunctions,
+        ...criterion.linkedCriteria.flatMap(collect),
+        ...criterion.nestedGroups.flatMap((group) => group.criteria.flatMap(collect)),
+      ];
+      return decision.criteriaDetails.flatMap(collect);
+    }),
     dependencies: buildDependencies(report, allReports),
     inclusionCriteria: [...requiredClauses, ...anyOfClauses],
     exclusionCriteria: excludedClauses,
@@ -1117,6 +1150,8 @@ const COLUMN_LABELS: Record<string, string> = {
   GMS_REGISTRATION_DATE: 'registration date',
   EPISODE: 'episode type',
   ISSUE_DATE: 'issue date',
+  STATUS: 'course status',
+  RX_TYPE: 'prescription type',
 };
 
 function tableLabel(table: string): string {
@@ -1128,16 +1163,9 @@ function columnLabel(column: string): string {
 }
 
 function describeValueSetRef(vs: ValueSetSummary): string {
-  const cluster = vs.cluster ? ` — cluster ${vs.cluster}` : '';
-  return `\`${vs.friendlyName}\` (${vs.codeCount} code${vs.codeCount === 1 ? '' : 's'}${cluster})`;
-}
-
-/** "This FISCALYEAR RELATIVE" → "in this fiscal year" */
-function humanizeRawTemporal(value: string): string {
-  const match = value.match(/^(Last|This|Next)\s+([A-Z]+)(?:\s+RELATIVE)?$/i);
-  if (!match) return value;
-  const unit = UNIT_WORDS[match[2].toUpperCase()] || match[2].toLowerCase();
-  return `in ${match[1].toLowerCase()} ${unit}`;
+  const preview = vs.preview.length > 120 ? `${vs.preview.slice(0, 117)}...` : vs.preview;
+  const detail = vs.cluster ? `, cluster ${vs.cluster}` : vs.codeCount <= 3 ? `, ${preview}` : '';
+  return `\`${vs.friendlyName}\` (${vs.codeCount} code${vs.codeCount === 1 ? '' : 's'}${detail})`;
 }
 
 const UNIT_WORDS: Record<string, string> = {
@@ -1153,7 +1181,7 @@ function isEnumValueSet(vs: ValueSetSummary): boolean {
   return vs.codeSystem === 'Internal';
 }
 
-function filterLabel(filter: CriterionFilterSummary): string {
+function filterLabel(filter: Pick<CriterionFilterSummary, 'columns' | 'displayName'>): string {
   const column = (filter.columns[0] || '').toUpperCase();
   if (COLUMN_LABELS[column]) return COLUMN_LABELS[column];
   // Prefer the XML display name ("Date Drug Added") over a raw column fallback,
@@ -1173,46 +1201,19 @@ function humanFilter(filter: CriterionFilterSummary): string {
   const label = filterLabel(filter);
   const notIn = filter.operator?.toUpperCase() === 'NOTIN';
   if (filter.valueSets.length > 0) {
-    // <allValues> sets are exclusions — they invert the operator
-    const allExcept = filter.valueSets.every((vs) => vs.isAllValuesExcept);
-    const negated = notIn !== allExcept;
-    // Enum filters (episode type, prescription type, status...) read better
-    // inline than as a code-list reference: "episode is not Review or Ended"
+    // Enum labels belong to their filter, rather than the code-list appendix.
     if (filter.valueSets.every(isEnumValueSet)) {
-      const values = filter.valueSets
-        .flatMap((vs) => vs.codes.map((code) => code.displayName || prettifyEnumValue(code.code)))
-        .join(' or ');
-      return `${label} is ${negated ? 'not ' : ''}${values}`;
+      const values = (vs: ValueSetSummary) => vs.codes.map((code) => code.displayName || prettifyEnumValue(code.code)).join(', ');
+      if (filter.valueSets.length === 1 && !filter.valueSets[0].isAllValuesExcept) {
+        return `${label}${notIn ? ' not in' : ''}: ${values(filter.valueSets[0])}`;
+      }
+      return `${label} ${formatValueSetCondition(filter.valueSets, notIn, values)}`;
     }
-    return `${label} ${negated ? 'not ' : ''}in ${filter.valueSets.map(describeValueSetRef).join(', ')}`;
+    return `${label} ${formatValueSetCondition(filter.valueSets, notIn, describeValueSetRef)}`;
   }
   const value = filter.range?.rendered || filter.singleValue || '';
   if (!value) return label;
-  return `${label} ${notIn ? 'not ' : ''}${humanizeRawTemporal(value)}`.trim();
-}
-
-/** "Earliest 1 where SNOMED code IN: COPD_COD" → "keep only the earliest matching record, and require its code to be in: COPD_COD" */
-function humanRestriction(restriction: CriterionRestrictionSummary): string {
-  const match = restriction.description.match(/^(Earliest|Latest)\s+(\d+)\s*(.*)$/i);
-  if (!match) return restriction.description;
-
-  const direction = match[1].toLowerCase();
-  const count = parseInt(match[2], 10);
-  const remainder = match[3]?.trim() || '';
-  const records = count === 1 ? `the ${direction} matching record` : `the ${direction} ${count} matching records`;
-
-  let conditionText = '';
-  const whereMatch = remainder.match(/^where\s+(.*)$/i);
-  if (whereMatch) {
-    conditionText = `, and require its ${whereMatch[1]
-      .replace(/^SNOMED code/i, 'code')
-      .replace(/^numeric value/i, 'numeric value')}`;
-    conditionText = conditionText.replace(/ IN:/, ' to be in:');
-  } else if (remainder) {
-    conditionText = `, ${remainder}`;
-  }
-
-  return `Keep only ${records}${conditionText}`;
+  return `${label} ${notIn ? 'not ' : ''}${humanizeRawTemporal(value, filter.columns[0])}`.trim();
 }
 
 /** "DATE at least 93 days before ... parent record's DATE" → "its date at least 93 days before ... the date of the record above" */
@@ -1332,47 +1333,51 @@ function renderCriterionBlock(
     lines.push(`${indent}  *"${criterion.description}"*`);
   }
 
-  // Enum sets (episode/status/prescription-type values) are rendered inline by
-  // their filter, not as code lists
-  const allValueSets = [...criterion.valueSets, ...criterion.extraValueSets].filter((vs) => !isEnumValueSet(vs));
-  allValueSets.forEach((vs) => recordValueSetUse(ctx, vs));
-  if (allValueSets.length > 0) {
-    lines.push(`${indent}  - Code in: ${allValueSets.map(describeValueSetRef).join(', or ')}`);
-  }
-
+  const filterGroups: CriterionFilterSummary[][] = [];
   for (const filter of criterion.filters) {
+    const previousGroup = filterGroups[filterGroups.length - 1];
+    const previous = previousGroup?.[0];
+    if (filter.range && previous?.range && filter.operator === 'IN' && previous.operator === 'IN'
+      && filter.columns.join(',') === previous.columns.join(',')) {
+      previousGroup.push(filter);
+    } else {
+      filterGroups.push([filter]);
+    }
+  }
+  let filterCount = 0;
+  for (const [filter, ...otherBounds] of filterGroups) {
     filter.valueSets.forEach((vs) => recordValueSetUse(ctx, vs));
     if (filter.parameter) ctx.parameters.add(filter.parameter.name);
-    // Skip code/drug filters already covered by the ValueSets line
-    const filterColumn = filter.columns[0]?.toUpperCase();
-    if ((filterColumn === 'READCODE' || filterColumn === 'DRUGCODE') && filter.valueSets.length > 0) {
-      const covered = filter.valueSets.every((vs) => allValueSets.some((avs) => avs.friendlyName === vs.friendlyName));
-      if (covered) continue;
-    }
+    const conjunction = filterCount > 0 ? 'AND ' : 'Where ';
     if (filter.parameter) {
-      lines.push(`${indent}  - Where ${filterLabel(filter)} matches the runtime parameter \`${filter.parameter.name}\` (prompted when the search runs)`);
+      lines.push(`${indent}  - ${conjunction}${filterLabel(filter)} matches the runtime parameter \`${filter.parameter.name}\` (prompted when the search runs)`);
+      filterCount++;
       continue;
     }
     // Skip filters that carry no condition (operator-only boundaries render empty)
-    const rendered = humanFilter(filter);
+    const rendered = [humanFilter(filter), ...otherBounds.map((bound) => bound.range?.rendered)].filter(Boolean).join(' AND ');
     if (!rendered || rendered === filterLabel(filter)) continue;
     // Only add the symbolic form when it says more than the words already do
-    const symbolic = symbolicRange(filter.range, filter.columns[0] || '');
+    const symbolic = [filter, ...otherBounds].map((bound) => symbolicRange(bound.range, bound.columns[0] || '')).filter(Boolean).join(' AND ');
     const addSymbolic = symbolic && !rendered.includes(symbolic);
-    lines.push(`${indent}  - Where ${rendered}${addSymbolic ? ` — \`${symbolic}\`` : ''}`);
+    lines.push(`${indent}  - ${conjunction}${rendered}${addSymbolic ? `, \`${symbolic}\`` : ''}`);
+    filterCount++;
+  }
+  for (const warning of criterion.sameColumnConjunctions) {
+    lines.push(`${indent}  - ${formatSameColumnConjunction(warning)}`);
   }
 
   for (const restriction of criterion.restrictions) {
-    const words = humanRestriction(restriction);
+    const words = restriction.rendered;
     const symbolic = symbolicRestriction(restriction);
     const addSymbolic = symbolic && !words.includes(symbolic);
-    lines.push(`${indent}  - ${words}${addSymbolic ? ` — \`${symbolic}\`` : ''}`);
+    lines.push(`${indent}  - ${words}${addSymbolic ? `, \`${symbolic}\`` : ''}`);
   }
   // Test sets check the kept record's code; they are not the criterion's code list
   const testValueSets = criterion.restrictionValueSets.filter((vs) => !isEnumValueSet(vs));
   testValueSets.forEach((vs) => recordValueSetUse(ctx, vs));
   if (testValueSets.length > 0) {
-    lines.push(`${indent}  - Kept record's code tested against: ${testValueSets.map(describeValueSetRef).join(', or ')}`);
+    lines.push(`${indent}  - Restriction test sets (applied after record selection): ${testValueSets.map((vs) => `${describeValueSetRef(vs)}${testOperatorSuffix(vs)}`).join('; ')}`);
   }
 
   let childIndex = 0;
@@ -1447,6 +1452,12 @@ function shortValueSetHash(summary: ValueSetSummary): string {
 
 function escapeTableCell(text: string): string {
   return text.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+}
+
+// Mark only exclusion tests; inclusion is the default reading
+function testOperatorSuffix(vs: { testOperators?: string[] }): string {
+  const ops = (vs.testOperators ?? []).filter((op) => op !== 'IN');
+  return ops.length > 0 ? ` [${ops.join(', ')}]` : '';
 }
 
 export function buildImplementationGuideMarkdown(report: EmisReport, allReports: EmisReport[]): string {

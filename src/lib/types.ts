@@ -68,6 +68,7 @@ export interface RangeBoundary {
 export interface DateRange {
   from?: RangeBoundary;
   to?: RangeBoundary;
+  relativeTo?: string;
 }
 
 export interface ColumnFilter {
@@ -95,6 +96,16 @@ export interface SearchRestriction {
   recordCount?: number;
   direction?: string;
   conditions?: RestrictionCondition[];
+  orderColumns?: Array<{ column: string; direction?: string }>;
+  testFilters?: ColumnFilter[];
+}
+
+export interface CriterionValueSetFilter {
+  filterId: string;
+  column: string;
+  inNotIn?: string;
+  source: 'filter' | 'restriction-test';
+  valueSets: EmisValueSet[];
 }
 
 export interface LinkedRelationship {
@@ -111,6 +122,8 @@ export interface SearchCriterion {
   negation: boolean;
   valueSets: EmisValueSet[];
   columnFilters: ColumnFilter[];
+  /** Value sets grouped by their selecting filter or kept-record test. */
+  valueSetFilters?: CriterionValueSetFilter[];
   restrictions: SearchRestriction[];
   exceptionCode?: string;
   linkedCriteria: SearchCriterion[];

@@ -11,7 +11,7 @@ import type {
   ValueSetGroup,
 } from '@/lib/types';
 import { formatRelationship } from '@/lib/rule-format-utils';
-import { buildLibraryItemReferenceSummary, buildRulesMarkdown, formatValueSetPreview, getCriterionDisplayData } from '@/lib/agent-report-utils';
+import { buildLibraryItemReferenceSummary, buildRulesMarkdown, formatValueSetPreview, getCriterionDisplayData, getSameColumnConjunctions, formatSameColumnConjunction } from '@/lib/agent-report-utils';
 import { generateValueSetFriendlyName } from '@/lib/valueset-utils';
 import { BnfHint } from '@/components/bnf-hint';
 import { Card, CardContent } from '@/components/ui/card';
@@ -615,7 +615,8 @@ function CriterionCard({
 }) {
   const [isOpen, setIsOpen] = useState(true);
   const isLinked = depth > 0;
-  const { dedupedValueSets, extraValueSets, testValueSets, filters, restrictions } = getCriterionDisplayData(criterion);
+  const { testValueSets, filters, restrictions } = getCriterionDisplayData(criterion);
+  const conjunctions = getSameColumnConjunctions(criterion, friendlyNameMap);
 
   return (
     <div className={`rounded-md border ${isLinked ? 'border-l-2 border-l-blue-500 ml-4 bg-blue-500/5' : 'border-border bg-muted/30'}`}>
@@ -645,65 +646,47 @@ function CriterionCard({
               </div>
             )}
 
-            {/* ValueSets (main code sets, deduplicated by code content) */}
-            {dedupedValueSets.length > 0 && (
-              <div className="space-y-1">
-                {dedupedValueSets.map((vs, vsIdx) => (
-                  <ValueSetRow
-                    key={`${vs.id}-${vsIdx}`}
-                    vs={vs}
-                    friendlyName={friendlyNameMap.get(vs.id)}
-                    expanded={findExpanded?.(vs)}
-                  />
-                ))}
-              </div>
-            )}
-
-            {/* Extra ValueSets from column filters not already in criterion.valueSets */}
-            {extraValueSets.length > 0 && (
-              <div className="space-y-1">
-                {extraValueSets.map((vs, vsIdx) => (
-                  <ValueSetRow
-                    key={vs.id || `extra-${vsIdx}`}
-                    vs={vs}
-                    friendlyName={friendlyNameMap.get(vs.id)}
-                    expanded={findExpanded?.(vs)}
-                  />
-                ))}
-              </div>
-            )}
-
-            {/* Column filters (prerequisites) */}
             {filters.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 items-center">
-                <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Where</span>
-                {filters.map((c, i) => (
-                  <span key={`f-${i}`} className="contents">
-                    {i > 0 && (
-                      <span className="text-[10px] text-muted-foreground font-medium">AND</span>
-                    )}
-                    <Badge variant="outline" className="bg-slate-500/10 text-slate-700 dark:text-slate-300 border-slate-500/20 text-xs">
-                      {c.label ? `${c.label} ${c.value}` : c.value}
-                    </Badge>
-                  </span>
+              <div className="space-y-2">
+                {filters.map((filter, filterIndex) => (
+                  <div key={`filter-${filterIndex}`} className="space-y-1 rounded border border-border p-2">
+                    <p className="text-xs text-muted-foreground">
+                      <span className="font-medium">{filterIndex > 0 ? 'AND ' : 'Where '}</span>
+                      {filter.label} {filter.value}
+                    </p>
+                    {filter.valueSets?.map((vs, vsIndex) => (
+                      <div key={`${vs.id}-${vsIndex}`}>
+                        {vsIndex > 0 && <p className="text-[10px] text-muted-foreground">OR</p>}
+                        <ValueSetRow
+                          vs={vs}
+                          friendlyName={friendlyNameMap.get(vs.id)}
+                          expanded={findExpanded?.(vs)}
+                        />
+                      </div>
+                    ))}
+                  </div>
                 ))}
               </div>
             )}
+            {conjunctions.map((warning) => (
+              <p key={warning.column} className="text-xs text-amber-700 dark:text-amber-300">{formatSameColumnConjunction(warning)}</p>
+            ))}
 
             {/* Restrictions (record selection) */}
             {restrictions.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 items-center">
-                <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Then</span>
-                {restrictions.map((c, i) => (
-                  <span key={`r-${i}`} className="contents">
-                    {i > 0 && (
-                      <span className="text-[10px] text-muted-foreground font-medium">AND</span>
-                    )}
-                    <Badge variant="outline" className="bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/20 text-xs">
-                      {c.label ? `${c.label} ${c.value}` : c.value}
-                    </Badge>
-                  </span>
-                ))}
+              <div className="space-y-1">
+                <div className="flex flex-wrap gap-1.5 items-center">
+                  {restrictions.map((c, i) => (
+                    <span key={`r-${i}`} className="contents">
+                      {i > 0 && (
+                        <span className="text-[10px] text-muted-foreground font-medium">AND</span>
+                      )}
+                      <Badge variant="outline" className="bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/20 text-xs">
+                        {c.label ? `${c.label} ${c.value}` : c.value}
+                      </Badge>
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -711,7 +694,7 @@ function CriterionCard({
             {testValueSets.length > 0 && (
               <div className="space-y-1">
                 <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">
-                  Kept record&apos;s code must be in
+                  Restriction test sets, applied after record selection
                 </p>
                 {testValueSets.map((vs, vsIdx) => (
                   <ValueSetRow
@@ -723,6 +706,27 @@ function CriterionCard({
                 ))}
               </div>
             )}
+
+            {(criterion.baseCriteriaGroups ?? []).map((group, groupIndex) => (
+              <div key={groupIndex} className="space-y-2 mt-2 rounded border border-border p-2">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Requires nested group {groupIndex + 1}: {group.memberOperator === 'OR' ? 'ANY (OR)' : 'ALL (AND)'} of the following
+                </p>
+                {group.criteria.map((nested, nestedIndex) => (
+                  <div key={`${nested.id}-${nestedIndex}`}>
+                    {nestedIndex > 0 && <p className="text-xs font-medium text-muted-foreground">{group.memberOperator}</p>}
+                    <CriterionCard
+                      criterion={nested}
+                      index={nestedIndex}
+                      findExpanded={findExpanded}
+                      friendlyNameMap={friendlyNameMap}
+                      allReports={allReports}
+                      depth={depth + 1}
+                    />
+                  </div>
+                ))}
+              </div>
+            ))}
 
             {/* Linked criteria */}
             {criterion.linkedCriteria.length > 0 && (
