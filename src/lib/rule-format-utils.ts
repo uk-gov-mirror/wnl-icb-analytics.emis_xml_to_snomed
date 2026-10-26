@@ -2,7 +2,7 @@
  * Human-readable formatting utilities for EMIS rule structures.
  */
 
-import type { RangeBoundary, DateRange, SearchRestriction, LinkedRelationship } from './types';
+import type { RangeBoundary, DateRange, SearchRestriction, LinkedRelationship, EmisValueSet } from './types';
 
 const OPERATOR_MAP: Record<string, string> = {
   GTEQ: '>=',
@@ -92,27 +92,33 @@ function friendlyBoundary(b: RangeBoundary | undefined, column?: string): string
   const unit = b.unit?.toUpperCase() ?? '';
   const relation = b.relation?.toUpperCase();
   const op = b.operator?.toUpperCase() ?? '';
+  const col = column?.toUpperCase() ?? '';
+  const isNumeric = ['AGE', 'AGE_AT_EVENT', 'NUMERIC_VALUE', 'VALUE'].includes(col);
+  const dateOp: Record<string, string> = {
+    GT: 'strictly after', GTE: 'on or after', GTEQ: 'on or after',
+    LT: 'strictly before', LTE: 'on or before', LTEQ: 'on or before', EQ: 'on',
+  };
+  const operatorWords = isNumeric ? friendlyOp(op) : (dateOp[op] || formatOperator(op));
 
   // Operator-only boundary with no value — unbounded constraint (e.g. "date must exist")
   if (!val && op) return '';
 
   if (relation === 'ABSOLUTE') {
-    return `${friendlyOp(op)} ${val}`.trim();
+    return `${operatorWords} ${val}`.trim();
   }
 
   // Named temporal: "Last", "This", "Next"
   if (['Last', 'This', 'Next'].includes(val)) {
     const unitLabel = UNIT_LABELS[unit] ?? unit.toLowerCase();
-    return `${friendlyOp(op)} ${val} ${unitLabel}`.trim();
+    const period = `${val.toLowerCase()} ${unitLabel}`;
+    return `${operatorWords} ${['GTE', 'GTEQ'].includes(op) ? `the start of ${period}` : period}`.trim();
   }
 
   const num = parseInt(val, 10);
   if (!isNaN(num)) {
     const absNum = Math.abs(num);
     const unitLabel = pluralise(unit, absNum);
-    const col = column?.toUpperCase() ?? '';
-    const isAge = col === 'AGE';
-    const isNumeric = col === 'NUMERIC_VALUE' || col === 'VALUE';
+    const isAge = col === 'AGE' || col === 'AGE_AT_EVENT';
 
     if (isAge) {
       return `${friendlyOp(op)} ${absNum} ${unitLabel} old`;
@@ -123,31 +129,9 @@ function friendlyBoundary(b: RangeBoundary | undefined, column?: string): string
       return `${formatOperator(op)} ${val}`.trim();
     }
 
-    // Date columns: relative offset from today
-    // Operator determines direction relative to the offset point
-    if (num < 0) {
-      // Negative = past offset (e.g., -1 year = 1 year ago)
-      // GT/GTEQ: dates after that point = "within the last X"
-      // LT/LTEQ: dates before that point = "before X ago"
-      if (op === 'LT') {
-        return `before ${absNum} ${unitLabel} ago`;
-      }
-      if (op === 'LTEQ') {
-        return `on or before ${absNum} ${unitLabel} ago`;
-      }
-      return `within the last ${absNum} ${unitLabel}`;
-    }
-    if (num === 0) return `${friendlyOp(op)} now`;
-    // Positive = future offset
-    // LT/LTEQ: dates before that point = "within the next X"
-    // GT/GTEQ: dates after that point = "after X from now"
-    if (op === 'GT') {
-      return `after ${absNum} ${unitLabel} from now`;
-    }
-    if (op === 'GTEQ') {
-      return `on or after ${absNum} ${unitLabel} from now`;
-    }
-    return `within the next ${absNum} ${unitLabel}`;
+    const point = num === 0 ? 'the search date'
+      : `${absNum} ${unitLabel} ${num < 0 ? 'before' : 'after'} the search date`;
+    return `${operatorWords} ${point}`;
   }
 
   return `${friendlyOp(op)} ${val} ${unit}`.trim();
@@ -171,12 +155,79 @@ export function formatColumnFilterRange(r: DateRange | undefined, column?: strin
   const fromStr = friendlyBoundary(r.from, column);
   const toStr = friendlyBoundary(r.to, column);
 
-  if (fromStr && toStr) return `${fromStr} to ${toStr}`;
+  if (fromStr && toStr) return `${fromStr} AND ${toStr}`;
   return fromStr || toStr || '';
 }
 
+/** Named periods arrive as flattened XML variable tokens. */
+export function humanizeRawTemporal(value: string, column?: string): string {
+  const month = value.match(/^(\d+) MONTH ABSOLUTE$/i);
+  if (column === 'DOB' && month && Number(month[1]) >= 1 && Number(month[1]) <= 12) {
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    return `in ${months[Number(month[1]) - 1]}`;
+  }
+  const match = value.match(/^(Last|This|Next)\s+([A-Z]+)(?:\s+RELATIVE)?$/i);
+  if (!match) return value;
+  const unit = UNIT_LABELS[match[2].toUpperCase()] || match[2].toLowerCase();
+  return `in ${match[1].toLowerCase()} ${unit}`;
+}
+
+
+export function formatValueSetCondition<T extends { isAllValuesExcept?: boolean }>(
+  sets: T[],
+  notIn: boolean,
+  describe: (set: T) => string,
+): string {
+  if (sets.length === 1) {
+    return `${notIn !== Boolean(sets[0].isAllValuesExcept) ? 'not in' : 'in'} ${describe(sets[0])}`;
+  }
+  const union = sets.map((set) => `${set.isAllValuesExcept ? 'all values except ' : ''}${describe(set)}`).join(' OR ');
+  return `${notIn ? 'not in' : 'in'} (${union})`;
+}
+
+function restrictionSetLabel(set: EmisValueSet): string {
+  if (set.description) return set.description;
+  const names = set.values.map((value) => value.displayName || value.code);
+  return names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3} more` : '');
+}
+
 export function formatRestriction(r: SearchRestriction): string {
-  return r.description || 'Unknown restriction';
+  const labels: Record<string, string> = {
+    READCODE: 'code', DRUGCODE: 'drug code', NUMERIC_VALUE: 'numeric value',
+    DATE: 'date', ISSUE_DATE: 'issue date',
+  };
+  const label = (column: string) => labels[column] || column.toLowerCase().replace(/_/g, ' ');
+  const tests = (r.testFilters ?? []).map((filter) => {
+    const name = filter.columns.map(label).join(', ');
+    if (filter.valueSets?.length) {
+      return `${name} ${formatValueSetCondition(filter.valueSets, filter.inNotIn === 'NOTIN', restrictionSetLabel)}`;
+    }
+    const value = formatColumnFilterRange(filter.range, filter.columns[0]) || humanizeRawTemporal(filter.singleValue || '', filter.columns[0]);
+    return value ? `${name} ${filter.inNotIn === 'NOTIN' ? 'not ' : ''}${value}` : '';
+  }).filter(Boolean);
+  if (tests.length === 0 && r.conditions?.length) {
+    for (const condition of r.conditions) {
+      const name = label(condition.column);
+      if (condition.valueSets?.length) {
+        tests.push(`${name} ${condition.operator === 'NOTIN' ? 'not in' : 'in'} (${condition.valueSets.join(' OR ')})`);
+      }
+      if (condition.rangeValues?.length) {
+        tests.push(`${name} ${condition.operator === 'NOTIN' ? 'not ' : ''}${condition.rangeValues.join(' AND ')}`);
+      }
+    }
+  }
+  if (r.recordCount == null) {
+    return tests.length ? `Require ${tests.join(' AND ')}` : r.description || 'Unknown restriction';
+  }
+  const direction = r.direction === 'DESC' ? 'latest' : r.direction === 'ASC' ? 'earliest' : 'first';
+  const order = (r.orderColumns ?? []).map((column) =>
+    `${label(column.column)}${column.direction && column.direction !== r.direction ? ` ${column.direction}` : ''}`).join(', ');
+  const rank = `Keep the ${direction} ${r.recordCount}${order ? ` by ${order}` : ''}`;
+  if (!tests.length) return rank;
+  const test = tests.join(' AND ');
+  return r.recordCount === 1
+    ? `${rank}, then test the kept record: ${test}`
+    : `${rank}; passes if at least one kept record meets the test: ${test}`;
 }
 
 /**

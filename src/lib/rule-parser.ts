@@ -165,6 +165,28 @@ function parseCriterion(node: any): SearchCriterion | null {
 
   // Restrictions
   const restrictions = parseRestrictionsFromCriterion(node, filterAttrs);
+  const valueSetFilters: NonNullable<SearchCriterion['valueSetFilters']> = [];
+  const addFilterSets = (filters: ColumnFilter[], source: 'filter' | 'restriction-test') => {
+    filters.forEach((filter, index) => {
+      if (!filter.valueSets?.length) return;
+      for (const column of filter.columns) {
+        valueSetFilters.push({
+          filterId: filter.id || `${id}:${source}:${index + 1}`,
+          column,
+          inNotIn: filter.inNotIn,
+          source,
+          valueSets: filter.valueSets,
+        });
+      }
+    });
+  };
+  addFilterSets(columnFilters, 'filter');
+  restrictions.forEach((restriction, index) => {
+    addFilterSets((restriction.testFilters ?? []).map((filter, testIndex) => ({
+      ...filter,
+      id: filter.id || `${id}:restriction:${index + 1}:test:${testIndex + 1}`,
+    })), 'restriction-test');
+  });
 
   // Linked criteria
   const linkedCriteria = parseLinkedCriteria(node);
@@ -177,6 +199,7 @@ function parseCriterion(node: any): SearchCriterion | null {
     negation,
     valueSets,
     columnFilters,
+    valueSetFilters,
     restrictions,
     exceptionCode,
     linkedCriteria,
@@ -275,7 +298,7 @@ function parseColumnFilter(cvNode: any): ColumnFilter | null {
   // Range
   let range: DateRange | undefined;
   if (cvNode.rangeValue) {
-    range = parseDateRange(cvNode.rangeValue);
+    range = parseDateRange(cvNode.rangeValue, true);
   }
 
   // Single value (temporal variable patterns)
@@ -331,14 +354,24 @@ function parseColumnFilter(cvNode: any): ColumnFilter | null {
 
 // --- Date Ranges ---
 
-function parseDateRange(rangeNode: any): DateRange | undefined {
+function parseDateRange(rangeNode: any, resolveBaseline = false): DateRange | undefined {
   if (!rangeNode) return undefined;
 
   const from = parseRangeBoundary(rangeNode.rangeFrom);
   const to = parseRangeBoundary(rangeNode.rangeTo);
+  const relativeTo = extractText(rangeNode['@_relativeTo']) || undefined;
+
+  // EMIS omits the value for a boundary at the search baseline.
+  if (resolveBaseline && relativeTo === 'BASELINE') {
+    for (const boundary of [from, to]) {
+      if (boundary?.operator && boundary.value === undefined) {
+        Object.assign(boundary, { value: '0', unit: 'DAY', relation: 'RELATIVE' });
+      }
+    }
+  }
 
   if (!from && !to) return undefined;
-  return { from, to };
+  return { from, to, ...(relativeTo ? { relativeTo } : {}) };
 }
 
 function parseRangeBoundary(boundaryNode: any): RangeBoundary | undefined {
@@ -443,14 +476,22 @@ function parseRestriction(rNode: any): SearchRestriction | null {
   const conditions = parseTestConditions(rNode.testAttribute);
 
   // Build restriction
-  return buildRestriction(recordCount, direction, conditions);
+  return {
+    ...buildRestriction(recordCount, direction, conditions),
+    orderColumns: toArray(columnOrder?.columns).map((column) => ({
+      column: extractText(column?.column),
+      direction: extractText(column?.direction) || undefined,
+    })),
+    testFilters: toArray(rNode.testAttribute).flatMap((attribute) =>
+      toArray(attribute?.columnValue).map(parseColumnFilter).filter((filter): filter is ColumnFilter => filter !== null)),
+  };
 }
 
 function parseTestConditions(testAttrNode: any): RestrictionCondition[] {
   if (!testAttrNode) return [];
 
   const conditions: RestrictionCondition[] = [];
-  const columnValues = toArray(testAttrNode.columnValue);
+  const columnValues = toArray(testAttrNode).flatMap((attribute) => toArray(attribute.columnValue));
 
   for (const cv of columnValues) {
     const column = extractText(cv?.column) || '';

@@ -69,6 +69,26 @@ npm run start
 
 ## Architecture
 
+### Criterion rendering
+
+Value sets within one filter are joined with OR. Separate filters are joined
+with AND, including filters on the same column. Status and prescription type
+remain separate filters. When code lists share a column, one record must match
+all those filters, so lists with no overlap select no records.
+
+Filters select candidate records first. A restriction then keeps the latest or
+earliest N records in its stated order and applies its test to the kept records.
+For N greater than 1, at least one kept record must meet the test. Date wording
+distinguishes strict bounds from inclusive bounds and retains the search-date
+upper bound.
+
+#### Known gaps
+
+Library-item filters within list-report columns are not parsed, so their
+same-column conjunctions are not shown or flagged. Guides omit excluded codes
+inside filters. Some reused `_vsN` names refer to different code lists within
+one report; use the source value-set IDs to distinguish them.
+
 ### Technology Stack
 
 - **Framework**: Next.js 15 with App Router
