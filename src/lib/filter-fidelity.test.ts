@@ -13,7 +13,7 @@ import {
   getCriterionDisplayData,
   SAME_COLUMN_CONJUNCTION_CAVEAT,
 } from './agent-report-utils';
-import { formatColumnFilterRange, formatValueSetCondition, formatRestriction, humanizeRawTemporal } from './rule-format-utils';
+import { formatColumnFilterRange, formatRelationship, formatValueSetCondition, formatRestriction, humanizeRawTemporal } from './rule-format-utils';
 
 const document = parseEmisXml(readFileSync(path.join(__dirname, 'fixtures/filter-fidelity.xml'), 'utf8'));
 
@@ -79,7 +79,7 @@ test('the COPD UI renders nested filters, AND, NOT, restrictions and linked crit
   assert.equal((text.match(/ALL \(AND\) of the following/g) ?? []).length, 2);
   assert.match(text, /Clinical Codes EVENTS NOT Where Code in COPDRES_COD/);
   assert.match(text, /Keep the earliest 1 by date/);
-  assert.match(text, /Linked criteria:.*DATE after parent record/);
+  assert.match(text, /Linked criteria:.*DATE strictly after parent record/);
   assert.ok(text.includes('on or before the search date'));
 
   const withOr = structuredClone(report);
@@ -177,6 +177,35 @@ test('date wording distinguishes strict and inclusive bounds around the search d
     assert.equal(formatColumnFilterRange({ from: { operator, value: '2025-01-01', relation: 'ABSOLUTE' } }, 'DATE'), `${expected} 2025-01-01`);
   }
   assert.equal(formatColumnFilterRange({ from: { operator: 'GTEQ', value: '35' } }, 'NUMERIC_VALUE'), '>= 35');
+});
+
+test('CYPAST_HR_DTR links a record within the 3 months before the desktop review', async () => {
+  const { report, reports, detail, guide } = await fixture('6411d554');
+  const window = "DATE on or after 3 months before parent record's DATE and strictly before 1 day before parent record's DATE";
+  const linked = detail.linkedCriteria[0].relationship!;
+  assert.equal(linked.rendered, window);
+  assert.equal(linked.range?.from?.rendered, "on or after 3 months before parent record's DATE");
+  assert.equal(linked.range?.to?.rendered, "strictly before 1 day before parent record's DATE");
+  assert.match(guide, /Linked record A\.1\*\* — join: its date on or after 3 months before the date of record A and strictly before 1 day before the date of record A, `A\.1 date >= A date - 3 months AND A\.1 date < A date - 1 day`/);
+  assert.match(buildRulesMarkdown(report, reports), /From: on or after 3 months before parent record's DATE/);
+  for (const output of [guide, buildRulesMarkdown(report, reports), renderRule(report), JSON.stringify(detail)]) {
+    assert.ok(!/at least 3 months before|under 1 day before|before the search date AND strictly before 1 day/.test(output));
+  }
+  assert.ok(renderRule(report).includes(window.replace(/'/g, '&#x27;')));
+});
+
+test('linked windows read relative to the parent record for every operator and sign', () => {
+  const relationship = (operator: string, value: string) => formatRelationship({
+    parentColumn: 'DATE', childColumn: 'DATE', rangeValue: { from: { operator, value, unit: 'DAY' } },
+  });
+  for (const [operator, words] of [
+    ['GT', 'strictly after'], ['GTEQ', 'on or after'], ['LT', 'strictly before'], ['LTEQ', 'on or before'],
+  ]) {
+    assert.equal(relationship(operator, '-93'), `DATE ${words} 93 days before parent record's DATE`);
+    assert.equal(relationship(operator, '186'), `DATE ${words} 186 days after parent record's DATE`);
+    assert.equal(relationship(operator, '0'), `DATE ${words} parent record's DATE`);
+  }
+  assert.equal(formatRelationship({ parentColumn: 'DATE', childColumn: 'DATE' }), 'Linked on DATE');
 });
 
 test('OR within a filter preserves complements and applies NOTIN to the union', () => {

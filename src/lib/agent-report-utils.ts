@@ -10,7 +10,7 @@ import type {
   ColumnFilter,
   RestrictionCondition,
 } from '@/lib/types';
-import { formatColumnFilterRange, formatOperator, formatRelationship, formatRestriction, formatRangeBoundary, formatValueSetCondition, humanizeRawTemporal } from '@/lib/rule-format-utils';
+import { formatColumnFilterRange, formatOperator, formatRelationship, formatRelationshipBoundary, formatRelationshipRange, formatRestriction, formatRangeBoundary, formatValueSetCondition, humanizeRawTemporal } from '@/lib/rule-format-utils';
 import { generateValueSetFriendlyName, generateValueSetHash } from '@/lib/valueset-utils';
 
 export interface ValueSetSummary {
@@ -546,12 +546,20 @@ function buildFilterSummary(
 }
 
 function buildRelationshipSummary(criterion: SearchCriterion): RelationshipSummary | null {
-  if (!criterion.relationship) return null;
+  const relationship = criterion.relationship;
+  if (!relationship) return null;
+  // Window boundaries are offsets from the parent record, not the search date
+  const parent = relationship.parentColumn ?? '?';
+  const boundary = (b: RangeBoundary | undefined) => {
+    const summary = buildRangeBoundarySummary(b, relationship.childColumn);
+    return summary && { ...summary, rendered: formatRelationshipBoundary(b, parent) };
+  };
+  const range = relationship.rangeValue;
   return {
-    parentColumn: criterion.relationship.parentColumn || null,
-    childColumn: criterion.relationship.childColumn || null,
-    rendered: formatRelationship(criterion.relationship),
-    range: buildDateRangeSummary(criterion.relationship.rangeValue, criterion.relationship.childColumn),
+    parentColumn: relationship.parentColumn || null,
+    childColumn: relationship.childColumn || null,
+    rendered: formatRelationship(relationship),
+    range: range ? { from: boundary(range.from), to: boundary(range.to), rendered: formatRelationshipRange(range, parent) } : null,
   };
 }
 
@@ -1216,10 +1224,10 @@ function humanFilter(filter: CriterionFilterSummary): string {
   return `${label} ${notIn ? 'not ' : ''}${humanizeRawTemporal(value, filter.columns[0])}`.trim();
 }
 
-/** "DATE at least 93 days before ... parent record's DATE" → "its date at least 93 days before ... the date of the record above" */
+/** "DATE on or after 93 days before parent record's DATE" → "its date on or after 93 days before the date of the record above" */
 function humanRelationship(relationship: RelationshipSummary): string {
   let text = relationship.rendered;
-  text = text.replace(/parent record's\s+([A-Z_]+)/i, (_, col) => `the ${columnLabel(col)} of the record above`);
+  text = text.replace(/parent record's\s+([A-Z_]+)/gi, (_, col) => `the ${columnLabel(col)} of the record above`);
   text = text.replace(/^([A-Z_]+)\s/, (_, col) => `its ${columnLabel(col)} `);
   return text;
 }
@@ -1264,6 +1272,22 @@ function symbolicRange(range: DateRangeSummary | null, column: string): string |
     const value = symbolicBoundary(boundary, kind);
     if (!value) return null; // only emit a symbolic form when every boundary has one
     parts.push(`${token} ${boundary.operatorSymbol} ${value}`);
+  }
+  return parts.length > 0 ? parts.join(' AND ') : null;
+}
+
+/** Linked window as a join: `A.1 date >= A date - 3 months AND A.1 date < A date - 1 day` */
+function symbolicRelationship(relationship: RelationshipSummary, childLabel: string, parentLabel: string): string | null {
+  const range = relationship.range;
+  if (!range || !relationship.childColumn || !relationship.parentColumn) return null;
+  const child = `${childLabel} ${columnLabel(relationship.childColumn)}`;
+  const parent = `${parentLabel} ${columnLabel(relationship.parentColumn)}`;
+  const parts: string[] = [];
+  for (const boundary of [range.from, range.to]) {
+    if (!boundary) continue;
+    const value = symbolicBoundary(boundary, 'date');
+    if (!value?.startsWith('today') || boundary.relation?.toUpperCase() === 'ABSOLUTE') return null;
+    parts.push(`${child} ${boundary.operatorSymbol} ${value.replace(/^today/, parent)}`);
   }
   return parts.length > 0 ? parts.join(' AND ') : null;
 }
@@ -1320,9 +1344,10 @@ function renderCriterionBlock(
     if (criterion.relationship) {
       const rendered = humanRelationship(criterion.relationship);
       const linkedOn = rendered.match(/^Linked on ([A-Z_]+)$/i);
+      const symbolic = symbolicRelationship(criterion.relationship, label, parentLabel);
       joinText = linkedOn
         ? `same ${columnLabel(linkedOn[1])} as record ${parentLabel}`
-        : rendered.replace(/the record above/g, `record ${parentLabel}`);
+        : rendered.replace(/the record above/g, `record ${parentLabel}`) + (symbolic ? `, \`${symbolic}\`` : '');
     }
     lines.push(`${indent}- **Linked record ${label}**${negationText} — join: ${joinText}`);
   } else {

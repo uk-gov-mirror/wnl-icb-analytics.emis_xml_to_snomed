@@ -82,6 +82,11 @@ For N greater than 1, at least one kept record must meet the test. Date wording
 distinguishes strict bounds from inclusive bounds and retains the search-date
 upper bound.
 
+Linked-criterion windows are offsets from the parent record's date, not the
+search date. `GTEQ -3 MONTH` with `LT -1 DAY` reads "on or after 3 months
+before the parent record's date and strictly before 1 day before it"
+(`child date >= parent date - 3 months AND child date < parent date - 1 day`).
+
 #### Known gaps
 
 Library-item filters within list-report columns are not parsed, so their
