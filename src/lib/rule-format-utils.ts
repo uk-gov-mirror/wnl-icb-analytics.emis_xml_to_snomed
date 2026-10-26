@@ -24,6 +24,12 @@ const FRIENDLY_OP: Record<string, string> = {
   LTE: 'at most',
 };
 
+/** Date operator words, strict vs inclusive spelled out. */
+const DATE_OP: Record<string, string> = {
+  GT: 'strictly after', GTE: 'on or after', GTEQ: 'on or after',
+  LT: 'strictly before', LTE: 'on or before', LTEQ: 'on or before', EQ: 'on',
+};
+
 const UNIT_LABELS: Record<string, string> = {
   DAY: 'day',
   WEEK: 'week',
@@ -94,11 +100,7 @@ function friendlyBoundary(b: RangeBoundary | undefined, column?: string): string
   const op = b.operator?.toUpperCase() ?? '';
   const col = column?.toUpperCase() ?? '';
   const isNumeric = ['AGE', 'AGE_AT_EVENT', 'NUMERIC_VALUE', 'VALUE'].includes(col);
-  const dateOp: Record<string, string> = {
-    GT: 'strictly after', GTE: 'on or after', GTEQ: 'on or after',
-    LT: 'strictly before', LTE: 'on or before', LTEQ: 'on or before', EQ: 'on',
-  };
-  const operatorWords = isNumeric ? friendlyOp(op) : (dateOp[op] || formatOperator(op));
+  const operatorWords = isNumeric ? friendlyOp(op) : (DATE_OP[op] || formatOperator(op));
 
   // Operator-only boundary with no value — unbounded constraint (e.g. "date must exist")
   if (!val && op) return '';
@@ -231,53 +233,31 @@ export function formatRestriction(r: SearchRestriction): string {
 }
 
 /**
- * Format a date range for relationship context using friendly language.
- * Produces e.g. "on or after today", "within last 6 months" instead of raw ">= now".
+ * One linked-window boundary, anchored to the parent record:
+ * GTEQ -3 MONTH -> "on or after 3 months before parent record's DATE"
+ * (child date >= parent date - 3 months, i.e. no more than 3 months before it).
  */
-function formatRelationshipRange(r: DateRange | undefined): string {
-  if (!r) return '';
-
-  const parts: string[] = [];
-  if (r.from) parts.push(formatRelBoundary(r.from));
-  if (r.to) parts.push(formatRelBoundary(r.to));
-  const nonEmpty = parts.filter(Boolean);
-  return nonEmpty.join(' and ');
-}
-
-function formatRelBoundary(b: RangeBoundary): string {
+export function formatRelationshipBoundary(b: RangeBoundary | undefined, parentColumn: string): string {
   if (!b) return '';
   const val = b.value ?? '';
-  const unit = b.unit?.toUpperCase() ?? '';
   const op = b.operator?.toUpperCase() ?? '';
-  const relation = b.relation?.toUpperCase();
-
   if (!val && op) return '';
 
   const num = parseInt(val, 10);
+  const words = DATE_OP[op];
+  if (!words || isNaN(num) || b.relation?.toUpperCase() === 'ABSOLUTE') return formatRangeBoundary(b);
 
-  // In linked criteria, value=0 means "the parent record's date", not "today"
-  if (!isNaN(num) && num === 0 && relation !== 'ABSOLUTE') {
-    switch (op) {
-      case 'GTEQ': case 'GTE': return 'on or after';
-      case 'LTEQ': case 'LTE': return 'on or before';
-      case 'GT': return 'after';
-      case 'LT': return 'before';
-      case 'EQ': return 'same as';
-      default: return '';
-    }
-  }
+  const anchor = `parent record's ${parentColumn}`;
+  if (num === 0) return `${words} ${anchor}`;
+  if (!b.unit) return formatRangeBoundary(b);
+  const absNum = Math.abs(num);
+  return `${words} ${absNum} ${pluralise(b.unit, absNum)} ${num < 0 ? 'before' : 'after'} ${anchor}`;
+}
 
-  // Relative offset from parent record date
-  if (!isNaN(num) && unit && relation !== 'ABSOLUTE') {
-    const absNum = Math.abs(num);
-    const unitLabel = pluralise(unit, absNum);
-    const friendlyOpStr = FRIENDLY_OP[op] ?? formatOperator(op);
-    if (num < 0) return `${friendlyOpStr} ${absNum} ${unitLabel} before`.trim();
-    return `${friendlyOpStr} ${absNum} ${unitLabel} after`.trim();
-  }
-
-  // Fallback
-  return formatRangeBoundary(b);
+/** Both boundaries of a linked window, each with its own anchor. */
+export function formatRelationshipRange(r: DateRange | undefined, parentColumn: string): string {
+  if (!r) return '';
+  return [r.from, r.to].map((b) => formatRelationshipBoundary(b, parentColumn)).filter(Boolean).join(' and ');
 }
 
 export function formatRelationship(r: LinkedRelationship | undefined): string {
@@ -286,13 +266,7 @@ export function formatRelationship(r: LinkedRelationship | undefined): string {
   const parent = r.parentColumn ?? '?';
   const child = r.childColumn ?? '?';
 
-  const rangeDesc = formatRelationshipRange(r.rangeValue);
-
-  if (parent === child) {
-    // e.g. "DATE on or after parent record's DATE"
-    return rangeDesc ? `${child} ${rangeDesc} parent record's ${parent}` : `Linked on ${parent}`;
-  }
-  return rangeDesc
-    ? `${child} ${rangeDesc} parent record's ${parent}`
-    : `${parent} linked to ${child}`;
+  const rangeDesc = formatRelationshipRange(r.rangeValue, parent);
+  if (rangeDesc) return `${child} ${rangeDesc}`;
+  return parent === child ? `Linked on ${parent}` : `${parent} linked to ${child}`;
 }

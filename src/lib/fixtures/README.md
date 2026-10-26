@@ -1,6 +1,6 @@
 # Filter fidelity fixtures
 
-`filter-fidelity.xml` contains five unchanged criteria extracted from
+`filter-fidelity.xml` contains unchanged criteria extracted from
 `NCL LTC LCS R5 updated 27112025.xml`. The report wrappers retain only the report
 ID and name, with one synthetic AND group per criterion. There is no patient
 data. These are rendering fixtures, not complete report populations.
@@ -16,6 +16,9 @@ data. These are rendering fixtures, not complete report populations.
   this a Latest 1 example.
 - Statin eligibility `eccfbddb-d698-46fd-8bcc-10e12225c4ca`: a genuine Latest 1
   restriction with a NOTIN test.
+- CYPAST_HR_DTR `6411d554-3475-4506-97af-3472a237e4aa` (from the `[CYPAST_HR_DTR]`
+  report; the same ID in `[rCYPAST_HR_DTR]` has no upper bound): linked window
+  `GTEQ -3 MONTH` and `LT -1 DAY` relative to the parent record's date.
 
 The other tests use synthetic combinations of these criteria or synthetic date
 bounds. They do not change the extracted XML.

@@ -4245,4 +4245,121 @@
       </criteriaGroup>
     </population>
   </report>
+  <report>
+    <id>e48c9946-187a-4c5c-9e76-0b2dca586c49</id>
+    <name>[CYPAST_HR_DTR] On Asthma(CYP) register- High Risk: Desk Top Review completed</name>
+    <population>
+      <criteriaGroup>
+        <definition>
+          <memberOperator>AND</memberOperator>
+          <criteria>
+            <criterion>
+              <id>6411d554-3475-4506-97af-3472a237e4aa</id>
+              <table>EVENTS</table>
+              <displayName>Clinical Codes</displayName>
+              <negation>false</negation>
+              <filterAttribute>
+                <columnValue>
+                  <id>85411e13-0632-41a6-8f85-e33b6ade1e1e</id>
+                  <column>READCODE</column>
+                  <displayName>Clinical Code</displayName>
+                  <inNotIn>IN</inNotIn>
+                  <valueSet>
+                    <id>588fcdb7-58e7-400c-b772-c3d48017372d</id>
+                    <codeSystem>SNOMED_CONCEPT</codeSystem>
+                    <values>
+                      <value>2380081000000111</value>
+                      <displayName>Review of patient at risk of asthma</displayName>
+                      <includeChildren>true</includeChildren>
+                    </values>
+                  </valueSet>
+                </columnValue>
+                <columnValue>
+                  <id>f8807017-bc83-4ef7-af39-0e80b5e7e55f</id>
+                  <column>DATE</column>
+                  <displayName>Date</displayName>
+                  <inNotIn>IN</inNotIn>
+                  <rangeValue>
+                    <rangeFrom>
+                      <value>
+                        <value>-1</value>
+                        <unit>YEAR</unit>
+                        <relation>RELATIVE</relation>
+                      </value>
+                      <operator>GT</operator>
+                    </rangeFrom>
+                  </rangeValue>
+                </columnValue>
+                <restriction>
+                  <columnOrder>
+                    <recordCount>1</recordCount>
+                    <columns>
+                      <column>DATE</column>
+                      <displayName>Date</displayName>
+                      <direction>DESC</direction>
+                    </columns>
+                  </columnOrder>
+                </restriction>
+              </filterAttribute>
+              <linkedCriterion>
+                <relationship>
+                  <parentColumn>DATE</parentColumn>
+                  <parentColumnDisplayName>Date</parentColumnDisplayName>
+                  <childColumn>DATE</childColumn>
+                  <childColumnDisplayName>Date</childColumnDisplayName>
+                  <rangeValue>
+                    <rangeFrom>
+                      <value>
+                        <value>-3</value>
+                        <unit>MONTH</unit>
+                      </value>
+                      <operator>GTEQ</operator>
+                    </rangeFrom>
+                    <rangeTo>
+                      <value>
+                        <value>-1</value>
+                        <unit>DAY</unit>
+                      </value>
+                      <operator>LT</operator>
+                    </rangeTo>
+                  </rangeValue>
+                </relationship>
+                <criterion>
+                  <id>908416e9-703a-41f0-a081-16be7ca4487e</id>
+                  <table>EVENTS</table>
+                  <displayName>Clinical Codes</displayName>
+                  <negation>false</negation>
+                  <filterAttribute>
+                    <columnValue>
+                      <id>842c1af8-1f59-4d14-9cb9-d382a403cf3c</id>
+                      <column>READCODE</column>
+                      <displayName>Clinical Code</displayName>
+                      <inNotIn>IN</inNotIn>
+                      <valueSet>
+                        <id>6eff9450-48fe-495c-ac62-a42f1794c6b7</id>
+                        <codeSystem>SNOMED_CONCEPT</codeSystem>
+                        <values>
+                          <value>1488421017</value>
+                          <displayName>Asthma annual review</displayName>
+                          <includeChildren>true</includeChildren>
+                        </values>
+                        <values>
+                          <value>2380081000000111</value>
+                          <displayName>Review of patient at risk of asthma</displayName>
+                          <includeChildren>true</includeChildren>
+                        </values>
+                      </valueSet>
+                    </columnValue>
+                  </filterAttribute>
+                </criterion>
+              </linkedCriterion>
+            </criterion>
+          </criteria>
+        </definition>
+        <actionIfTrue>SELECT</actionIfTrue>
+        <actionIfFalse>REJECT</actionIfFalse>
+        <id>fixture-group-6411d554</id>
+      </criteriaGroup>
+    </population>
+  </report>
 </enquiryDocument>
