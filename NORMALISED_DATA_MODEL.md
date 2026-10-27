@@ -56,6 +56,7 @@ Stores original codes from the XML file.
 | is_refset | BOOLEAN | Whether this is a refset ID | |
 | translated_to_snomed_code | VARCHAR | SNOMED code after ConceptMap translation | NULLABLE |
 | translated_to_display | VARCHAR | Display name of translated SNOMED code | NULLABLE |
+| translation_equivalence | VARCHAR | Per-code relationship returned by the primary EMIS CodeID ConceptMap, including equivalent, wider, narrower and inexact. `unmapped` means no map match. Retained when the expansion filter rejects the target. Separate from XML include_children. | |
 
 ### 4. expanded_concepts
 Stores concepts returned by the terminology server.
@@ -92,6 +93,15 @@ Stores excluded codes for each valueset with translation tracking.
 | translated_to_snomed_code | VARCHAR | Translated SNOMED code if successful | NULLABLE |
 | included_in_ecl | BOOLEAN | Whether code was included in ECL MINUS clause | |
 | translation_error | VARCHAR | Error message if translation failed | NULLABLE |
+
+Local extraction also writes `exception_resolution_audit.json`. It records each
+exception occurrence's target, resolution status, descendant scope and reason.
+`resolved_family` removes an exact active preparation family or mapped clinical
+family. `inactive_exact` removes an exact inactive dm+d product and its
+descendants. `legacy_exact` keeps the loaded exact target, including a null
+target, without descendant subtraction. See the local extraction instructions in
+`README.md` for the loaded-target snapshot. These fields are audit metadata and
+do not add columns to the exception CSV.
 
 ## Indexes
 
@@ -151,3 +161,14 @@ Stores excluded codes for each valueset with translation tracking.
 - Export individual tables or all tables
 
 
+### Exception audit scope and equivalence
+
+The seven-column exceptions CSV retains one primary target per XML exception.
+`exception_resolution_audit.json` also carries scope, override version and any
+additional retained target. Consumers must use that audit to distinguish exact
+subtraction from descendant subtraction. The CSV alone does not express scope.
+
+Original-code `translation_equivalence` can describe a primary CodeID map match
+while the selected target comes from DrugCodeID fallback. `unmapped` also covers a
+match that returned no equivalence part. Manual exception overrides do not change
+that recorded ConceptMap relationship.

@@ -2,7 +2,7 @@
  * Client-side ValueSet expansion for batch extraction.
  *
  * Port of the server's expandSingleValueSet (rawMode): the browser drives the
- * fan-out (SCT_CONST two-step, RF2 refset fallback, 50-code ECL batches) and
+ * fan-out (SCT_CONST recursive expansion, RF2 refset fallback, 50-code ECL batches) and
  * the server only proxies single bounded terminology calls. This keeps every
  * function invocation short and its response small — no 300s timeout or 4.5MB
  * payload cap in the path — and makes each step individually retryable.
@@ -14,15 +14,16 @@ import {
   SnomedConcept,
   TranslatedCode,
   EclExpandResponse,
+  EmisConstituentsResponse,
   Rf2RefsetResponse,
   ResolveHistoricalResponse,
 } from './types';
 import {
   separateRefsets,
   buildBatchedEclQuery,
-  buildUkProductEcl,
-  buildModificationOfEcl,
 } from './ecl-builder';
+import { expandSctConstProducts } from './sct-const-expander';
+import { ExceptionResolution, exceptionError, exceptionExclusions } from './exception-resolver';
 import { fetchApi, CancelledError } from './api-client';
 
 interface ValueWithMetadata {
@@ -64,11 +65,11 @@ async function expandEcl(ecl: string, options: ExpandOptions): Promise<SnomedCon
     all.push(...concepts);
     offset += concepts.length;
 
-    if (concepts.length < ECL_PAGE_SIZE) break;
-    if (typeof res.total === 'number' && all.length >= res.total) break;
+    if (typeof res.total === 'number' && all.length >= res.total) return all;
+    if (typeof res.total !== 'number' && concepts.length < ECL_PAGE_SIZE) return all;
+    if (concepts.length === 0) throw new Error('Incomplete terminology expansion: no further page returned');
   }
-
-  return all;
+  throw new Error('Incomplete terminology expansion: page limit reached');
 }
 
 /** Resolve display names for codes missing an RF2 description */
@@ -102,15 +103,17 @@ export async function expandValueSetClientSide(
   historical: Record<string, string>,
   options: ExpandOptions = {},
 ): Promise<RawValueSetExpansion> {
-  // Excluded codes: only those with a ConceptMap translation, resolved to current concepts
-  const excludedCodes = (vs.exceptions || [])
-    .map((e) => e.code)
-    .filter((code) => !!translations[code])
-    .map((code) => {
-      const snomedCode = translations[code]!.code;
-      return historical[snomedCode] || snomedCode;
-    });
-  const excludedSet = new Set(excludedCodes);
+  const exceptionResolutions = vs.exceptions?.length
+    ? (await fetchApi<{ resolutions: ExceptionResolution[] }>('/api/terminology/resolve-exceptions',
+      { exceptions: vs.exceptions, translations, historical, codeSystem: vs.codeSystem }, { isCancelled: options.isCancelled })).resolutions
+    : [];
+  const expansionError = exceptionError(exceptionResolutions);
+  if (expansionError) return {
+    concepts: [], parentCodes: [], rf2RefsetIds: [], successfulSctConstCodes: [],
+    sctConstNoProducts: {}, exceptionResolutions, expansionError,
+  };
+  const { descendantCodes: excludedCodes, exactCodes } = exceptionExclusions(exceptionResolutions);
+  const excludedSet = new Set([...excludedCodes, ...exactCodes]);
 
   // Build values with translated/resolved codes
   const vsValues: ValueWithMetadata[] = vs.values.map((v) => {
@@ -129,11 +132,15 @@ export async function expandValueSetClientSide(
     };
   });
 
-  // === SCT_CONST codes: two-step UK Product expansion per substance ===
+  // === SCT_CONST codes: recursive UK Product expansion per substance ===
   const sctConstCodes = vsValues.filter((v) => v.codeSystem === 'SCT_CONST');
   const ukProductConcepts: SnomedConcept[] = [];
   const successfulSctConstCodes = new Set<string>();
   const sctConstNoProducts = new Map<string, { substanceCode: string; displayName: string }>();
+  const listedSubstances = sctConstCodes.flatMap((v) => v.translatedSnomedCode ? [v.translatedSnomedCode] : []);
+  const findConstituentSubstances = async (substanceCodes: string[]) => (await fetchApi<EmisConstituentsResponse>(
+    '/api/terminology/emis-constituents', { substanceCodes }, { isCancelled: options.isCancelled },
+  )).substanceCodes || [];
 
   for (const sctConstValue of sctConstCodes) {
     if (options.isCancelled?.()) throw new CancelledError();
@@ -148,23 +155,10 @@ export async function expandValueSetClientSide(
 
     const substanceCode = sctConstValue.translatedSnomedCode;
 
-    // Step 1: substances that are modifications of the base substance
-    let modifications: SnomedConcept[] = [];
-    try {
-      modifications = await expandEcl(buildModificationOfEcl(substanceCode), options);
-    } catch (error) {
-      if (error instanceof CancelledError) throw error;
-      console.warn(`Modification query failed for ${substanceCode}, continuing with base substance:`, error);
-    }
-
-    // Step 2: UK Products containing the base substance or any modification
-    const substanceCodes = [substanceCode, ...modifications.map((m) => m.code)];
-    const ukProductEcl =
-      substanceCodes.length === 1
-        ? buildUkProductEcl(substanceCode)
-        : substanceCodes.map((code) => `(${buildUkProductEcl(code)})`).join(' OR ');
-
-    const products = await expandEcl(ukProductEcl, options);
+    const { products } = await expandSctConstProducts(
+      substanceCode, excludedCodes, (ecl) => expandEcl(ecl, options), exactCodes,
+      { listedSubstances, findConstituentSubstances },
+    );
 
     if (products.length > 0) {
       successfulSctConstCodes.add(sctConstValue.originalCode);
@@ -267,7 +261,7 @@ export async function expandValueSetClientSide(
     if (options.isCancelled?.()) throw new CancelledError();
 
     const batch = valuesForEcl.slice(i, i + ECL_BATCH_SIZE);
-    const ecl = buildBatchedEclQuery(batch, excludedCodes);
+    const ecl = buildBatchedEclQuery(batch, excludedCodes, undefined, exactCodes);
     if (!ecl) continue;
 
     const batchConcepts = await expandEcl(ecl, options);
@@ -276,6 +270,11 @@ export async function expandValueSetClientSide(
 
   // Combine with UK Product concepts
   const combined = [...vsConcepts, ...ukProductConcepts];
+  // RF2 members bypass ECL MINUS. Apply complete exclusions after every branch.
+  for (let i = 0; i < excludedCodes.length; i += ECL_BATCH_SIZE) {
+    const excluded = await expandEcl(excludedCodes.slice(i, i + ECL_BATCH_SIZE).map(c => `<< ${c}`).join(' OR '), options);
+    excluded.forEach(c => excludedSet.add(c.code));
+  }
 
   // Mark parent codes (preserve source from RF2 or terminology server)
   const parentCodeSet = new Set(vsValues.map((v) => v.code));
@@ -298,6 +297,7 @@ export async function expandValueSetClientSide(
   });
 
   return {
+    exceptionResolutions,
     concepts: filteredConcepts,
     parentCodes: vsValues.map((v) => v.code),
     rf2RefsetIds,

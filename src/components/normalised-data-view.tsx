@@ -74,6 +74,7 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
         is_refset: oc.isRefset || false,
         translated_to_snomed_code: oc.translatedTo || '',
         translated_to_display: oc.translatedToDisplay || '',
+        translation_equivalence: oc.translationEquivalence || 'unmapped',
       })) || []
     ) || [];
 
@@ -260,6 +261,7 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">is_refset</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">translated_to_snomed_code</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">translated_to_display</TableHead>
+                <TableHead>translation_equivalence</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -287,6 +289,7 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
                     <TableCell className="h-6 px-2 py-0.5 text-xs text-muted-foreground whitespace-nowrap">
                       {oc.translatedToDisplay || ''}
                     </TableCell>
+                    <TableCell>{oc.translationEquivalence || 'unmapped'}</TableCell>
                   </TableRow>
                 ))
               )}

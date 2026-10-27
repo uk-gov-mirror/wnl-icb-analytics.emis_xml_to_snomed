@@ -206,6 +206,7 @@ export interface FhirValueSetExpansion {
 }
 
 export interface FhirConcept {
+  inactive?: boolean;
   system: string;
   code: string;
   display: string;
@@ -287,6 +288,7 @@ export interface ValueSetGroup {
     isRefset: boolean;
     translatedTo?: string; // SNOMED code after ConceptMap translation
     translatedToDisplay?: string; // Display name of translated SNOMED code
+    translationEquivalence?: string;
   }>;
   // Exception (excluded codes) metadata with translation tracking
   exceptions?: Array<{
@@ -295,6 +297,9 @@ export interface ValueSetGroup {
     translatedToSnomedCode: string | null;
     includedInEcl: boolean;
     translationError: string | null;
+    resolutionStatus?: import('./exception-resolver').ExceptionResolution['status'];
+    includeDescendants?: boolean;
+    resolutionReason?: string;
   }>;
 }
 
@@ -365,6 +370,7 @@ export interface TranslateCodesRequest {
 export interface TranslateCodesResponse {
   success: boolean;
   translations?: Record<string, TranslatedCode | null>;
+  equivalences?: Record<string, string>;
   error?: string;
 }
 
@@ -392,6 +398,17 @@ export interface EclExpandResponse {
   error?: string;
 }
 
+export interface EmisConstituentsRequest {
+  substanceCodes: string[];
+}
+
+export interface EmisConstituentsResponse {
+  success: boolean;
+  /** Substances, from those requested, that have their own EMIS constituent code */
+  substanceCodes?: string[];
+  error?: string;
+}
+
 export interface Rf2RefsetRequest {
   refsetIds: string[];
 }
@@ -404,6 +421,8 @@ export interface Rf2RefsetResponse {
 }
 
 export interface RawValueSetExpansion {
+  exceptionResolutions?: import('./exception-resolver').ExceptionResolution[];
+  expansionError?: string;
   concepts: SnomedConcept[];
   parentCodes: string[];
   eclExpression?: string;

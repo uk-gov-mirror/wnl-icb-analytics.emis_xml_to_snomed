@@ -38,6 +38,7 @@ export const normalizedTableColumns = {
     { key: 'is_refset', label: 'is_refset' },
     { key: 'translated_to_snomed_code', label: 'translated_to_snomed_code' },
     { key: 'translated_to_display', label: 'translated_to_display' },
+    { key: 'translation_equivalence', label: 'translation_equivalence' },
   ],
   expandedConcepts: [
     { key: 'concept_id', label: 'concept_id' },

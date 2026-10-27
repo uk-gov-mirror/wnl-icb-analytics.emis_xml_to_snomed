@@ -15,7 +15,8 @@ export function separateRefsets(values: EmisValue[]): {
 export function buildBatchedEclQuery(
   values: EmisValue[],
   excludedCodes: string[],
-  allConceptsMap?: Map<string, any> // Optional map of all expanded concepts to check for descendants
+  allConceptsMap?: Map<string, any>, // Optional map of all expanded concepts to check for descendants
+  exactExcludedCodes: string[] = [],
 ): string {
   // Filter out invalid codes (non-numeric codes like 'M', 'F', etc.)
   // SNOMED CT codes should be numeric strings, 6-18 digits long
@@ -99,7 +100,7 @@ export function buildBatchedEclQuery(
   }
 
   // Add exclusions if present (validate excluded codes first)
-  if (excludedCodes.length > 0) {
+  if (excludedCodes.length > 0 || exactExcludedCodes.length > 0) {
     // Filter out invalid excluded codes (same validation as parent codes)
     const validExcludedCodes = excludedCodes.filter((code) => {
       if (!isValidSnomedCode(code)) {
@@ -109,8 +110,9 @@ export function buildBatchedEclQuery(
       return true;
     });
 
-    if (validExcludedCodes.length > 0) {
-      const exclusions = validExcludedCodes.map((code) => `<< ${code}`).join(' OR ');
+    const validExactCodes = exactExcludedCodes.filter(isValidSnomedCode);
+    if (validExcludedCodes.length > 0 || validExactCodes.length > 0) {
+      const exclusions = [...validExcludedCodes.map((code) => `<< ${code}`), ...validExactCodes].join(' OR ');
       eclExpression = `(${eclExpression}) MINUS (${exclusions})`;
     } else {
       console.log(`All ${excludedCodes.length} excluded codes were invalid and filtered out`);
@@ -176,7 +178,8 @@ export function buildModificationOfEcl(substanceCode: string): string {
 export function buildFormattedEclExpression(
   values: EmisValue[],
   excludedCodes: string[],
-  allConceptsMap?: Map<string, any>
+  allConceptsMap?: Map<string, any>,
+  exactExcludedCodes: string[] = [],
 ): string {
-  return buildBatchedEclQuery(values, excludedCodes, allConceptsMap);
+  return buildBatchedEclQuery(values, excludedCodes, allConceptsMap, exactExcludedCodes);
 }

@@ -1,0 +1,54 @@
+{
+  "concepts": [
+    {
+      "display": "Erythromycin",
+      "code": "775822009"
+    },
+    {
+      "display": "Erythromycin 2% solution",
+      "code": "41739411000001106"
+    },
+    {
+      "display": "Erythromycin-containing product",
+      "code": "30427009"
+    },
+    {
+      "display": "Macrolide-containing product",
+      "code": "763878009"
+    },
+    {
+      "display": "Medicinal product",
+      "code": "763158003"
+    },
+    {
+      "display": "Medicinal product categorised by disposition",
+      "code": "766779001"
+    },
+    {
+      "display": "Medicinal product categorised by structure",
+      "code": "763760008"
+    },
+    {
+      "display": "Pharmaceutical / biologic product",
+      "code": "373873005"
+    },
+    {
+      "display": "SNOMED CT Concept",
+      "code": "138875005"
+    },
+    {
+      "display": "UK product",
+      "code": "10363601000001109"
+    },
+    {
+      "display": "Virtual medicinal product",
+      "code": "10363801000001108"
+    },
+    {
+      "display": "Virtual therapeutic moiety",
+      "code": "10363701000001104"
+    }
+  ],
+  "total": 12,
+  "ecl": ">>41739411000001106"
+}

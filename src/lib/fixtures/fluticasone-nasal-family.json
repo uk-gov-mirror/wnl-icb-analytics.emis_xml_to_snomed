@@ -1,0 +1,94 @@
+{
+  "concepts": [
+    {
+      "display": "Boots Pharmacy Hayfever and Allergy 50micrograms/dose nasal spray (The Boots Company Plc)",
+      "code": "20534011000001109"
+    },
+    {
+      "display": "Flixonase 50micrograms/dose aqueous nasal spray (DE Pharmaceuticals)",
+      "code": "13876311000001104"
+    },
+    {
+      "display": "Flixonase 50micrograms/dose aqueous nasal spray (Dowelhurst Ltd)",
+      "code": "5545111000001104"
+    },
+    {
+      "display": "Flixonase 50micrograms/dose aqueous nasal spray (GlaxoSmithKline UK Ltd)",
+      "code": "480211000001100"
+    },
+    {
+      "display": "Flixonase 50micrograms/dose aqueous nasal spray (Lexon (UK) Ltd)",
+      "code": "16179411000001101"
+    },
+    {
+      "display": "Flixonase 50micrograms/dose aqueous nasal spray (Mawdsley-Brooks & Company Ltd)",
+      "code": "16578711000001106"
+    },
+    {
+      "display": "Flixonase 50micrograms/dose aqueous nasal spray (Necessity Supplies Ltd)",
+      "code": "18261311000001107"
+    },
+    {
+      "display": "Flixonase 50micrograms/dose aqueous nasal spray (Sigma Pharmaceuticals Plc)",
+      "code": "14233511000001105"
+    },
+    {
+      "display": "Flixonase 50micrograms/dose aqueous nasal spray (Waymade Healthcare Plc)",
+      "code": "5366611000001105"
+    },
+    {
+      "display": "Fluticasone propionate 50micrograms/dose nasal spray",
+      "code": "39110511000001107"
+    },
+    {
+      "display": "Fluticasone propionate 50micrograms/dose nasal spray (Alissa Healthcare Research Ltd)",
+      "code": "41834411000001105"
+    },
+    {
+      "display": "Fluticasone propionate 50micrograms/dose nasal spray (Alliance Healthcare (Distribution) Ltd)",
+      "code": "44890311000001107"
+    },
+    {
+      "display": "Fluticasone propionate 50micrograms/dose nasal spray (CST Pharma Ltd)",
+      "code": "39012611000001103"
+    },
+    {
+      "display": "Fluticasone propionate 50micrograms/dose nasal spray (Dowelhurst Ltd)",
+      "code": "5620611000001107"
+    },
+    {
+      "display": "Fluticasone propionate 50micrograms/dose nasal spray (Kent Pharma (UK) Ltd)",
+      "code": "9328511000001107"
+    },
+    {
+      "display": "Nasofan 50micrograms/dose aqueous nasal spray (CST Pharma Ltd)",
+      "code": "37576111000001105"
+    },
+    {
+      "display": "Nasofan 50micrograms/dose aqueous nasal spray (DE Pharmaceuticals)",
+      "code": "38154311000001104"
+    },
+    {
+      "display": "Nasofan 50micrograms/dose aqueous nasal spray (Necessity Supplies Ltd)",
+      "code": "42863511000001103"
+    },
+    {
+      "display": "Nasofan 50micrograms/dose aqueous nasal spray (Teva UK Ltd)",
+      "code": "9310711000001107"
+    },
+    {
+      "display": "Nasofan Allergy 50micrograms/dose nasal spray (Teva UK Ltd)",
+      "code": "11177911000001100"
+    },
+    {
+      "display": "Pirinase Hayfever 0.05% nasal spray (Haleon UK Trading Ltd)",
+      "code": "4365311000001103"
+    },
+    {
+      "display": "Pirinase Hayfever Relief for Adults 0.05% nasal spray (Haleon UK Trading Ltd)",
+      "code": "31572011000001107"
+    }
+  ],
+  "ecl": "<<39110511000001107",
+  "total": 22
+}

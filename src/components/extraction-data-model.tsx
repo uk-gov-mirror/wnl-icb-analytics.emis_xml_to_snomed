@@ -27,7 +27,7 @@ const TABLES: TableInfo[] = [
     name: 'original_codes',
     primaryKey: 'original_code_id',
     foreignKeys: [{ column: 'valueset_id', references: 'valuesets.valueset_id' }],
-    columns: ['original_code_id', 'valueset_id', 'original_code', 'display_name', 'code_system', 'include_children', 'is_refset', 'translated_to_snomed_code', 'translated_to_display'],
+    columns: ['original_code_id', 'valueset_id', 'original_code', 'display_name', 'code_system', 'include_children', 'is_refset', 'translated_to_snomed_code', 'translated_to_display', 'translation_equivalence'],
   },
   {
     name: 'expanded_concepts',
